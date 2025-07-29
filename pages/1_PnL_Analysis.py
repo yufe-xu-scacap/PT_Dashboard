@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from io import StringIO
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Trade Report Downloader", layout="wide")
-st.title("📊 Trade Report Downloader")
+st.set_page_config(page_title="PnL Analysis & Report", layout="wide")
+st.title("📈 Daily PnL Analysis & Report")
 
 
 # --- Reusable Function (Modified for In-Memory Handling) ---
@@ -66,7 +66,7 @@ def get_reports_in_memory(date: str, bearer_token: str, status_placeholder) -> d
 bearer_token = st.text_input(
     "Enter your Bearer Token",
     type="password",
-    help="Need help finding the token? [Click here for instructions](https://your-help-url.com)"
+    help="Need help finding the token? [Franz Agent Tool](https://franz.agent-tool.scalable.capital/misc/s3-access/prod-market-making_trade-reports_scalable-fis?bucketPath=fis%2F)"
 )
 report_date = st.date_input("Select Report Date", value=datetime.now(timezone.utc))
 
