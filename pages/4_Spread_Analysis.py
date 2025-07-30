@@ -141,7 +141,7 @@ st.header("1. Upload Your Excel File")
 uploaded_file = st.file_uploader("Choose an Excel file", type='xlsx', help="Upload the Excel file with spread data.")
 
 if uploaded_file is not None and index_data is not None:
-    st.header("2. Analysis Results (Time Weighted Average Spread Pct PY535)")
+    st.header("2. Analysis Results (Time Weighted Average Spread Pct)")
     raw_df = pd.read_excel(uploaded_file, engine='openpyxl')
 
     with st.spinner("Analyzing data..."):

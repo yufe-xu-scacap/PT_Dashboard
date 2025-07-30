@@ -23,7 +23,7 @@ st.markdown(
 )
 
 # Add a title and some text to the page
-st.title("📈PT Dashboard")
+st.title("PT Dashboard")
 st.sidebar.success("Select a page above.")
 
 
