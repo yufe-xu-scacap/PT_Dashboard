@@ -9,6 +9,7 @@ from matplotlib.dates import DateFormatter
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 
+
 # --- Streamlit App Layout ---
 st.set_page_config(layout="wide")
 st.title('🛡️ Auto-Hedger Analysis')
