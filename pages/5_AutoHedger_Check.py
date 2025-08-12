@@ -89,15 +89,15 @@ if st.session_state.analysis_run:
                         first_client_idx = (group['TradeType'] == 'ClientTrade').idxmax()
 
                         # Find the index of the last 'HedgeTrade' or 'ManualTrade'
-                        is_hedge_or_manual = group['TradeType'].isin(['HedgeTrade', 'ManualTrade'])
+                        is_hedge = (group['TradeType'] == 'HedgeTrade')
 
-                        # Check if any hedge or manual trades exist to avoid ValueError on all-False Series
-                        if not is_hedge_or_manual.any():
-                            # If no hedges, maybe just return up to the last client trade or nothing
+                        if not is_hedge.any():
+                            # If no hedges, you might want to return nothing after the client trade,
+                            # or handle it differently. Here, we return just the client trade.
                             return group.loc[first_client_idx:first_client_idx]
 
                         # The corrected logic to find the last index by reversing the boolean Series
-                        last_hedge_idx = is_hedge_or_manual[::-1].idxmax()
+                        last_hedge_idx = is_hedge[::-1].idxmax()
 
                         # Return the slice from the first client trade to the last hedge
                         return group.loc[first_client_idx:last_hedge_idx]
