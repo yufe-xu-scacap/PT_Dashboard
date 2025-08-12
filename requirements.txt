@@ -4,3 +4,5 @@ requests
 beautifulsoup4
 pandas-market-calendars
 openpyxl
+seaborn
+matplotlib
