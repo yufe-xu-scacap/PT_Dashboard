@@ -117,8 +117,29 @@ if st.button("Fetch and Process Data"):
                         st.session_state['processed_data'] = None
                     else:
                         st.success("Data fetched and processed successfully!")
-                        df_true = df[df["is_suspected_mistrade"] == True].copy()
-                        df_false = df[df["is_suspected_mistrade"] == False].copy()
+
+                        # Rule 1: The original non-suspected flag is False
+                        condition1 = df['is_suspected_mistrade'] == False
+
+                        # Rule 2: Execution price is valid AND the deviation is small
+                        condition2 = (df['is_execution_price_valid_gettex'] == True) & (
+                                    df['price_pct_deviation_gettex'] <= 0.01)
+
+                        # Rule 3: The normalized PnL is small
+                        # Use .abs() for absolute value
+                        condition3 = (df['theoretical_pnl_against_mid_gettex'].abs() / df['trade_volume']) <= 0.01
+
+                        # Combine the rules: a trade is "non-suspected" if ANY of the conditions are met (OR logic)
+                        is_non_suspected = condition1 | condition2 | condition3
+
+                        # Create the two new DataFrames
+                        df_false = df[is_non_suspected]
+                        df_true = df[~is_non_suspected]  # The ~ character inverts the condition
+
+                        #old logic
+                        # df_true = df[df["is_suspected_mistrade"] == True].copy()
+                        # df_false = df[df["is_suspected_mistrade"] == False].copy()
+
                         # --- Store results in session state ---
                         st.session_state['processed_data'] = {
                             "suspected": df_true,
