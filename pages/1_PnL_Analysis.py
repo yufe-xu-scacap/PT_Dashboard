@@ -1,379 +1,286 @@
 import streamlit as st
-import pandas as pd
 import requests
-import json
-from datetime import datetime, timezone
-from io import StringIO
-import re
-
-# --- Page Configuration ---
-st.set_page_config(page_title="PnL Analysis & Report", layout="wide")
-
-# --- UPDATED CSS ---
-# We've simplified the styling to use a single container for the report.
-# I've also added a light gray background to the main app to make the white report "pop".
-# --- UPDATED CSS ---
-st.markdown("""
-<style>
-    .main-header {
-        color: #AFC7CA !important;
-    }
-    /* This sets the entire app background to white */
-    .stApp {
-        background-color: white;
-    }
-    /* This container will still give your report section a nice border and shadow */
-    .report-page-container {
-        background-color: white;
-        border-radius: 10px;
-        padding: 25px;
-        margin: 20px 0;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        border: 1px solid #e6e6e6; /* A subtle border for definition */
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# Apply the custom class to the title
-st.markdown('<h1 class="main-header">📈 Daily PnL Analysis & Report</h1>', unsafe_allow_html=True)
+import pandas as pd
+from datetime import datetime, timezone, timedelta
+import io
+from typing import Dict, Optional, List
+import exchange_calendars as xcals
+from zoneinfo import ZoneInfo
+import plotly.graph_objects as go          # already used below
+import plotly.io as pio                    # to export Plotly → PNG
+import matplotlib.ticker as mticker        # already used further down
+import matplotlib.pyplot as plt            # already used further down
 
 
-# --- Helper Functions (No changes needed here) ---
+# --- Streamlit Page Configuration ---
+st.set_page_config(layout="wide", page_title="Trading Report Dashboard")
+st.title("📈 Trading Report Dashboard")
 
-def style_dataframe_for_email(df: pd.DataFrame) -> str:
+
+# --- Core Data Fetching Function ---
+def get_reports(date: str, bearer_token: str, log_list: List[str], log_placeholder) -> Dict[str, pd.DataFrame]:
     """
-    Applies CSS styling to a DataFrame and returns it as an HTML string.
-    Hides the index. Sets white background, black text and borders, Arial font.
-    """
-    styles = [
-        dict(selector="", props=[("border-collapse", "collapse"),
-                                 ("font-family", "Arial, sans-serif")]),
-        dict(selector="th",
-             props=[("color", "black"), ("font-weight", "bold"), ("padding", "10px"),
-                    ("border", "1px solid black"), ("text-align", "center"),
-                    ("background-color", "white"), ("font-family", "Arial, sans-serif"),
-                    ("font-size", "10px")]),
-        dict(selector="td", props=[("padding", "8px"), ("border", "1px solid black"),
-                                   ("text-align", "right"), ("background-color", "white"),
-                                   ("font-family", "Arial, sans-serif"), ("font-size", "10px"),
-                                   ("color", "black")])
-    ]
-    styled_df = df.style.set_table_styles(styles).format(precision=2).hide(axis="index")
-    return styled_df.to_html()
-
-
-def style_summary_df(df: pd.DataFrame) -> str:
-    """
-    Applies CSS styling to a DataFrame and returns it as an HTML string.
-    Keeps the index visible. Sets white background, black text and borders, Arial font.
-    """
-    styles = [
-        dict(selector="", props=[("border-collapse", "collapse"),
-                                 ("font-family", "Arial, sans-serif")]),
-        dict(selector="th.col_heading",
-             props=[("color", "black"), ("font-weight", "bold"), ("padding", "10px"),
-                    ("border", "1px solid black"), ("text-align", "center"),
-                    ("background-color", "white"), ("font-family", "Arial, sans-serif"),
-                    ("font-size", "10px")]),
-        dict(selector="th.col_heading.level0",
-             props=[("color", "black"), ("font-weight", "bold"), ("padding", "10px"),
-                    ("border", "1px solid black"), ("text-align", "center"),
-                    ("background-color", "white"), ("font-family", "Arial, sans-serif"),
-                    ("font-size", "10px")]),
-        dict(selector="th.row_heading",
-             props=[("padding", "8px"), ("border", "1px solid black"), ("text-align", "left"),
-                    ("font-weight", "bold"), ("background-color", "white"),
-                    ("font-family", "Arial, sans-serif"), ("font-size", "10px"),
-                    ("color", "black")]),
-        dict(selector="td", props=[("padding", "8px"), ("border", "1px solid black"),
-                                   ("text-align", "right"), ("background-color", "white"),
-                                   ("font-family", "Arial, sans-serif"), ("font-size", "10px"),
-                                   ("color", "black")])
-    ]
-    styled_df = df.style.set_table_styles(styles).format(precision=2)
-    return styled_df.to_html()
-
-
-def get_popup_window_button(html_content: str) -> str:
-    """
-    Generates HTML/JS for a button that opens the given HTML content in a new browser window.
-    """
-    # Safely embed the HTML content into a JavaScript string variable
-    escaped_html = json.dumps(html_content)
-
-    button_html = f'''
-        <button
-            id="newWindowBtn"
-            style="padding: 10px 15px; border-radius: 5px; background-color: #007bff; color: white; border: none; cursor: pointer; font-size: 16px;"
-            onclick="openReportWindow()"
-        >
-            🚀 Open Report in New Window for Copying
-        </button>
-
-        <script>
-        function openReportWindow() {{
-            const reportHtml = {escaped_html};
-            const newWindow = window.open("", "_blank", "width=800,height=600");
-            if (newWindow) {{
-                newWindow.document.write(reportHtml);
-                newWindow.document.close();
-            }} else {{
-                alert("Popup was blocked. Please allow popups for this site to open the report.");
-            }}
-        }}
-        </script>
-    '''
-    return button_html
-
-
-def get_copy_area_for_report(html_content: str) -> str:
-    """
-    Creates a selectable text area with report content for manual copying.
-    """
-    # Process HTML to extract just the data
-    text_content = re.sub(r'<style.*?</style>', '', html_content, flags=re.DOTALL)
-    text_content = re.sub(r'<script.*?</script>', '', text_content, flags=re.DOTALL)
-    text_content = re.sub(r'<[^>]*>', ' ', text_content)
-    text_content = re.sub(r'\s+', ' ', text_content)
-    text_content = text_content.strip()
-
-    return f"""
-    <div style="margin-top: 20px; margin-bottom: 20px;">
-        <p style="font-weight: bold;">📋 Select all text below and copy manually:</p>
-        <textarea id="reportTextArea" style="width: 100%; height: 200px; padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-family: monospace; margin-top: 10px;">
-{text_content}
-        </textarea>
-    </div>
+    Retrieves daily and historical reports, appending feedback to the provided log_list.
     """
 
+    def _update_log(message: str, level: str = "INFO"):
+        """Helper function to update the log list and the streamlit placeholder."""
+        berlin_time = datetime.now(ZoneInfo("Europe/Berlin")).strftime('%H:%M:%S')
+        log_list.append(f"[{berlin_time}] {level}: {message}")
+        log_placeholder.markdown(f"```\n{' \n'.join(log_list[-10:])}\n```")
 
-def get_reports_in_memory(date: str, bearer_token: str, status_placeholder) -> dict:
-    """
-    Finds and fetches a list of daily report files, returning their content in memory.
-    """
-    reports_to_find = [
-        {"report_name": "ProfitandLoss", "name_format": "{date}-{time}FIS_EOD_{report_name}.csv"},
-        {"report_name": "Trades", "name_format": "{date}{time}FIS_EOD_{report_name}.csv"}
-    ]
+    date_str = str(date)
     headers = {'Authorization': f'Bearer {bearer_token}', 'Content-Type': 'application/json'}
-    downloaded_data = {}
-    base_url = 'https://franz.agent-tool.scalable.capital/agent/s3-access/buckets/prod-market-making.trade-reports.scalable-fis/download'
+    report_dataframes = {}
 
-    for report in reports_to_find:
-        st.info(f"Searching for report: {report['report_name']}...")
-        found_file = False
-        for hour in range(18, 24):
-            for minute in range(60):
-                time_str = f"{hour:02d}{minute:02d}"
-                file_key = f'fis/{report["name_format"].format(date=date, time=time_str, report_name=report["report_name"])}'
-                payload = {'key': file_key}
-                status_placeholder.text(f"Attempting to fetch: {file_key}")
-                try:
-                    response = requests.post(base_url, headers=headers, json=payload)
-                    if response.status_code in [200, 201]:
-                        st.success(f"Found and downloaded: {file_key}")
-                        downloaded_data[report["report_name"]] = response.content
-                        found_file = True
-                        break
-                except requests.RequestException as e:
-                    st.error(f"An error occurred: {e}")
-                    return {}
-            if found_file: break
-        if not found_file: st.warning(f"Could not find report '{report['report_name']}' for date {date}.")
-    status_placeholder.empty()
-    return downloaded_data
+    def _fetch_report(d_str: str, report_config: dict, start_time_str: str, end_time_str: str) -> Optional[
+        pd.DataFrame]:
+        try:
+            start_dt = datetime.strptime(f"{d_str}{start_time_str}", "%Y%m%d%H%M")
+            end_dt = datetime.strptime(f"{d_str}{end_time_str}", "%Y%m%d%H%M")
+            current_dt = start_dt
+        except ValueError:
+            return None
 
-
-# --- Streamlit User Interface ---
-
-bearer_token = st.text_input(
-    "Enter your Bearer Token",
-    type="password",
-    help="Need help finding the token? [Franz Agent Tool](https://franz.agent-tool.scalable.capital/misc/s3-access/prod-market-making_trade-reports_scalable-fis?bucketPath=fis%2F)"
-)
-report_date = st.date_input("Select Report Date", value=datetime.now(timezone.utc))
-
-if st.button("Fetch and Analyze Reports"):
-    if not bearer_token:
-        st.warning("Please enter your Bearer Token.")
-    else:
-        date_str = report_date.strftime("%Y%m%d")
-        status_placeholder = st.empty()
-
-        with st.spinner("Searching for report files... This may take a few minutes."):
-            downloaded_reports = get_reports_in_memory(date_str, bearer_token, status_placeholder)
-
-        if downloaded_reports and "ProfitandLoss" in downloaded_reports and "Trades" in downloaded_reports:
-            st.success("All reports fetched and processed successfully!")
+        while current_dt <= end_dt:
+            time_str = current_dt.strftime("%H%M")
+            server_filename = report_config["name_format"].format(date=d_str, time=time_str,
+                                                                  report_name=report_config["report_name"])
+            payload = {'key': f'fis/{server_filename}'}
             try:
-                # --- 1. Load all data into DataFrames ---
-                df_pnl = pd.read_csv(StringIO(downloaded_reports["ProfitandLoss"].decode('utf-8')))
-                df_trades = pd.read_csv(StringIO(downloaded_reports["Trades"].decode('utf-8')))
-                try:
-                    df_Instrument = pd.read_csv("Instrument list.csv")
-                except FileNotFoundError:
-                    st.error(
-                        "Error: 'Instrument list.csv' not found. Please place it in the same directory as the script.")
-                    st.stop()
+                response = requests.post(
+                    'https://franz.agent-tool.scalable.capital/agent/s3-access/buckets/prod-market-making.trade-reports.scalable-fis/download',
+                    headers=headers, json=payload, timeout=20
+                )
+                if response.status_code in [200, 201]:
+                    _update_log(f"✅ Found and retrieved: {server_filename}", "SUCCESS")
+                    try:
+                        return pd.read_csv(io.BytesIO(response.content))
+                    except Exception as e:
+                        _update_log(f"Failed to parse CSV content for {server_filename}: {e}", "ERROR")
+                        return None
+            except requests.exceptions.RequestException:
+                pass
+            current_dt += timedelta(minutes=1)
 
-                # --- 2. Calculations (No changes needed here) ---
-                total_instrument = 5238
-                Orders_Filled_MM = ((df_trades["Portfolio"] == "SCALMM") & (
-                    df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))).sum()
-                Orders_Filled_FR = ((df_trades["Portfolio"] == "SCALFRAC") & (
-                    df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))).sum()
-                Traded_Instruments_MM = df_trades[(df_trades["Portfolio"] == "SCALMM") & (
-                    df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))]['Instrument'].nunique()
-                Traded_Instruments_FR = df_trades[(df_trades["Portfolio"] == "SCALFRAC") & (
-                    df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))]['Instrument'].nunique()
-                Total_Turnover_MM = round(df_trades[df_trades['Portfolio'] == 'SCALMM']['Premium'].abs().sum())
-                Total_Turnover_FR = round(df_trades[df_trades['Portfolio'] == 'SCALFRAC']['Premium'].abs().sum())
-                Accepted_RFQ_Turnover_MM = round(df_trades[(df_trades['Portfolio'] == 'SCALMM') & (
-                    df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))]['Premium'].abs().sum())
-                Accepted_RFQ_Turnover_FR = round(df_trades[(df_trades['Portfolio'] == 'SCALFRAC') & (
-                    df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))]['Premium'].abs().sum())
-                if Accepted_RFQ_Turnover_MM > 0:
-                    Accepted_RFQ_Buy_Turnover_MM = round(df_trades[(df_trades['Portfolio'] == 'SCALMM') & (
-                        df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction'])) & (
-                                                                           df_trades['B/S'] == 'Buy')][
-                                                             'Premium'].abs().sum() / Accepted_RFQ_Turnover_MM, 4)
-                else:
-                    Accepted_RFQ_Buy_Turnover_MM = 0
-                if Accepted_RFQ_Turnover_FR > 0:
-                    Accepted_RFQ_Buy_Turnover_FR = round(df_trades[(df_trades['Portfolio'] == 'SCALFRAC') & (
-                        df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction'])) & (
-                                                                           df_trades['B/S'] == 'Buy')][
-                                                             'Premium'].abs().sum() / Accepted_RFQ_Turnover_FR, 4)
-                else:
-                    Accepted_RFQ_Buy_Turnover_FR = 0
+        return None
 
-                Daily_PnL_MM = round(df_pnl[df_pnl['Unnamed: 0'] == "SCALMM"]["BTPLD"].iloc[0])
-                Daily_PnL_FR = round(df_pnl[df_pnl['Unnamed: 0'] == "SCALFRAC"]["BTPLD"].iloc[0])
-                PnL_per_RFQ = round(Daily_PnL_MM / Orders_Filled_MM, 2) if Orders_Filled_MM > 0 else 0
-                PnL_per_RFQ_Turnover = f"{round((Daily_PnL_MM / Accepted_RFQ_Turnover_MM) * 10000, 2)}bp" if Accepted_RFQ_Turnover_MM > 0 else "0.00bp"
-                Estimated_Execution_Fees_MM = round((Total_Turnover_MM - Accepted_RFQ_Turnover_MM) * 0.00007 * 2 / 3, 2)
-                Estimated_Execution_Fees_FR = round((Total_Turnover_FR - Accepted_RFQ_Turnover_FR) * 0.00007, 2)
-                Net_PnL_per_RFQ_Turnover = f"{round(((Daily_PnL_MM - Estimated_Execution_Fees_MM) / Accepted_RFQ_Turnover_MM) * 10000, 2)}bp" if Accepted_RFQ_Turnover_MM > 0 else "0.00bp"
-                Total_Mtd_PnL_MM = round(df_pnl.loc[(df_pnl['Portfolio.Name'] == 'SCALMM') & (
-                        df_pnl['Unnamed: 0'] != 'SCALMM'), 'BTPLM'].sum())
-                Total_Mtd_PnL_FR = round(df_pnl.loc[(df_pnl['Portfolio.Name'] == 'SCALFRAC') & (
-                        df_pnl['Unnamed: 0'] != 'SCALFRAC'), 'BTPLM'].sum())
-                Total_Ytd_PnL_MM = round(df_pnl.loc[(df_pnl['Portfolio.Name'] == 'SCALMM') & (
-                        df_pnl['Unnamed: 0'] != 'SCALMM'), 'BTPL'].sum())
-                Total_Ytd_PnL_FR = round(df_pnl.loc[(df_pnl['Portfolio.Name'] == 'SCALFRAC') & (
-                        df_pnl['Unnamed: 0'] != 'SCALFRAC'), 'BTPL'].sum())
+    date_mapping_data = []
+    xetr_cal = xcals.get_calendar("XETR")
+    current_date_ts = pd.to_datetime(date_str).normalize()
 
-                Gross_Exposure_MM = round(df_pnl.loc[(df_pnl['Portfolio.Name'] == 'SCALMM') & (
-                        df_pnl['Unnamed: 0'] != 'SCALMM'), 'Gross Exposure'].sum())
-                Gross_Exposure_FR = round(df_pnl.loc[(df_pnl['Portfolio.Name'] == 'SCALFRAC') & (
-                        df_pnl['Unnamed: 0'] != 'SCALFRAC'), 'Gross Exposure'].sum())
-                Net_Exposure_MM = round(df_pnl.loc[(df_pnl['Portfolio.Name'] == 'SCALMM') & (
-                        df_pnl['Unnamed: 0'] != 'SCALMM'), 'BVal'].sum())
-                Net_Exposure_FR = round(df_pnl.loc[(df_pnl['Portfolio.Name'] == 'SCALFRAC') & (
-                        df_pnl['Unnamed: 0'] != 'SCALFRAC'), 'BVal'].sum())
+    _update_log(f"Searching for P&L reports...")
+    df_t0 = _fetch_report(date_str,
+                          {"report_name": "ProfitandLoss", "name_format": "{date}-{time}FIS_EOD_{report_name}.csv"},
+                          "1805", "1810")
+    if df_t0 is not None:
+        report_dataframes['ProfitandLoss'] = df_t0.copy()
+    else:
+        _update_log(f"P&L report for {date_str} (T-0) not found.", "ERROR")
 
-                # --- Create DataFrames (No changes needed here) ---
-                df_Trading_Statistics = pd.DataFrame(data={
-                    'Market Making (SCALMM)': [Orders_Filled_MM, Traded_Instruments_MM,
-                                               f"{Traded_Instruments_MM / total_instrument:.2%}", total_instrument,
-                                               Total_Turnover_MM, Accepted_RFQ_Turnover_MM,
-                                               f"{Accepted_RFQ_Buy_Turnover_MM:.2%}",
-                                               f"{1 - Accepted_RFQ_Buy_Turnover_MM:.2%}", round(
-                            Accepted_RFQ_Turnover_MM / Orders_Filled_MM if Orders_Filled_MM > 0 else 0),
-                                               Total_Turnover_MM - Accepted_RFQ_Turnover_MM],
-                    'Fractional (SCALFRAC)': [Orders_Filled_FR, Traded_Instruments_FR, '', '', Total_Turnover_FR,
-                                              Accepted_RFQ_Turnover_FR, f"{Accepted_RFQ_Buy_Turnover_FR:.2%}",
-                                              f"{1 - Accepted_RFQ_Buy_Turnover_FR:.2%}", '',
-                                              Total_Turnover_FR - Accepted_RFQ_Turnover_FR]},
-                    index=['Orders Filled', 'Traded Instruments',
-                           'Coverage % by Instrument Type', 'Total Instruments',
-                           'Total Turnover (€)', 'Accepted RFQ Turnover (€)',
-                           'Accepted RFQ Buy %', 'Accepted RFQ Sell %',
-                           'Average Accepted RFQ Trade Size (€)',
-                           'Avg Auto-Hedging Turnover (€)'])
-                df_PnL_Statistics = pd.DataFrame(data={
-                    'Market Making (SCALMM)': [Daily_PnL_MM, '', PnL_per_RFQ, PnL_per_RFQ_Turnover,
-                                               Net_PnL_per_RFQ_Turnover, Estimated_Execution_Fees_MM, Total_Mtd_PnL_MM,
-                                               Total_Ytd_PnL_MM],
-                    'Fractional (SCALFRAC)': [Daily_PnL_FR, '', '', '', '', Estimated_Execution_Fees_FR,
-                                              Total_Mtd_PnL_FR, Total_Ytd_PnL_FR]},
-                    index=['Daily PnL (€)', 'Total Daily PnL (€) Adj***',
-                           'PnL per RFQ (€/RFQ)', 'PnL per Accepted RFQ Turnover',
-                           'Net PnL per Accepted RFQ Turnover',
-                           'Estimated Execution Fees (€)', 'MTD PnL (€)', 'YTD PnL (€)'])
-                df_Delta = pd.DataFrame(data={'Market Making (SCALMM)': [Gross_Exposure_MM, Net_Exposure_MM],
-                                              'Fractional (SCALFRAC)': [Gross_Exposure_FR, Net_Exposure_FR]},
-                                        index=['Gross Exposure (€)', 'Net Exposure (€)'])
-
-                df_top_5_trades = pd.merge(
-                    df_trades[df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction'])].assign(
-                        AbsPremium=lambda df: df['Premium'].abs()).nlargest(5, 'AbsPremium')[
-                        ['Instrument', 'AbsPremium']], df_Instrument, left_on='Instrument', right_on='ISIN',
-                    how='left').rename(columns={'Name': 'Security Name', 'AbsPremium': 'Value (€)'})[
-                    ['ISIN', 'Security Name', 'Instrument Type', 'Value (€)']]
-                df_top_5_mosted_trades = pd.merge(
-                    df_trades.groupby('Instrument')['Premium'].apply(lambda x: x.abs().sum()).nlargest(5).rename(
-                        'Total_Turnover'), df_Instrument, left_on='Instrument', right_on='ISIN', how='left').rename(
-                    columns={'Name': 'Security Name', 'Total_Turnover': 'Turnover (€)'})[
-                    ['ISIN', 'Security Name', 'Instrument Type', 'Turnover (€)']]
-                df_top_10_winners = pd.merge(
-                    df_pnl[~df_pnl['Unnamed: 0'].isin(['SCALMM', 'SCALFRAC'])].groupby('Unnamed: 0')['BTPLD'].apply(
-                        lambda x: x.sum()).nlargest(10).rename('Total_PnL'), df_Instrument, left_on='Unnamed: 0',
-                    right_on='ISIN', how='left').rename(
-                    columns={'Name': 'Security Name', 'Total_PnL': 'Total PnL (€)'})[
-                    ['ISIN', 'Security Name', 'Instrument Type', 'Total PnL (€)']]
-                df_top_10_losers = pd.merge(
-                    df_pnl[~df_pnl['Unnamed: 0'].isin(['SCALMM', 'SCALFRAC'])].groupby('Unnamed: 0')['BTPLD'].apply(
-                        lambda x: x.sum()).nsmallest(10).rename('Total_PnL'), df_Instrument, left_on='Unnamed: 0',
-                    right_on='ISIN', how='left').rename(
-                    columns={'Name': 'Security Name', 'Total_PnL': 'Total PnL (€)'})[
-                    ['ISIN', 'Security Name', 'Instrument Type', 'Total PnL (€)']]
-                df_top_5_largest_positions = pd.merge(
-                    df_pnl[~df_pnl['Unnamed: 0'].isin(['SCALMM', 'SCALFRAC'])].groupby('Unnamed: 0')[
-                        'Gross Exposure'].apply(lambda x: x.sum()).nlargest(5).rename('GP'), df_Instrument,
-                    left_on='Unnamed: 0', right_on='ISIN', how='left').rename(
-                    columns={'Name': 'Security Name', 'GP': 'Open Delta Exposure (€)'})[
-                    ['ISIN', 'Security Name', 'Instrument Type', 'Open Delta Exposure (€)']]
-
-
-                # --- 3. Display all data on a single page (UPDATED SECTION) ---
-                # We've simplified this section to use the single report container.
-                st.header(f"Daily Report: {report_date.strftime('%B %d, %Y')}")
-                st.divider()
-
-                # This markdown injects the opening tag of our styled container.
-                # All Streamlit elements that follow will be placed inside this div.
-                st.markdown('<div class="report-page-container">', unsafe_allow_html=True)
-
-                st.subheader("Report Preview")
-
-                # Display all the dataframes within the container
-                st.markdown("<h4>PnL Statistics</h4>", unsafe_allow_html=True)
-                st.markdown(style_summary_df(df_PnL_Statistics), unsafe_allow_html=True)
-                st.markdown("<h4>Delta Exposure</h4>", unsafe_allow_html=True)
-                st.markdown(style_summary_df(df_Delta), unsafe_allow_html=True)
-                st.markdown("<h4>Trading Statistics</h4>", unsafe_allow_html=True)
-                st.markdown(style_summary_df(df_Trading_Statistics), unsafe_allow_html=True)
-                st.markdown("<h4>Top 5 Largest Positions by Gross Exposure</h4>", unsafe_allow_html=True)
-                st.markdown(style_dataframe_for_email(df_top_5_largest_positions), unsafe_allow_html=True)
-                st.markdown("<h4>Top 5 Most Traded Instruments by Turnover</h4>", unsafe_allow_html=True)
-                st.markdown(style_dataframe_for_email(df_top_5_mosted_trades), unsafe_allow_html=True)
-                st.markdown("<h4>Top 5 Trades by Value</h4>", unsafe_allow_html=True)
-                st.markdown(style_dataframe_for_email(df_top_5_trades), unsafe_allow_html=True)
-                st.markdown("<h4>Top 10 Winners</h4>", unsafe_allow_html=True)
-                st.markdown(style_dataframe_for_email(df_top_10_winners), unsafe_allow_html=True)
-                st.markdown("<h4>Top 10 Losers</h4>", unsafe_allow_html=True)
-                st.markdown(style_dataframe_for_email(df_top_10_losers), unsafe_allow_html=True)
-
-
-                # This markdown injects the closing tag for our container.
-                st.markdown('</div>', unsafe_allow_html=True)
-
-
-            except Exception as e:
-                st.error(f"An error occurred during analysis: {e}")
-                import traceback
-
-                st.error(traceback.format_exc())
+    prev_day_ts = current_date_ts
+    for i in range(1, 6):
+        prev_day_ts = xetr_cal.previous_session(prev_day_ts)
+        prev_day_str = prev_day_ts.strftime('%Y%m%d')
+        df = _fetch_report(prev_day_str,
+                           {"report_name": "ProfitandLoss", "name_format": "{date}-{time}FIS_EOD_{report_name}.csv"},
+                           "1805", "1810")
+        if df is not None:
+            report_dataframes[f"ProfitandLoss_T-{i}"] = df.copy()
         else:
-            st.error("Could not retrieve all necessary reports. Please check the logs above.")
+            _update_log(f"P&L report for {prev_day_str} (T-{i}) not found.", "ERROR")
+
+    _update_log(f"Searching for Trades reports...")
+    trades_df = _fetch_report(date_str,
+                              {"report_name": "Trades", "name_format": "{date}{time}FIS_EOD_{report_name}.csv"}, "1808",
+                              "1810")
+    if trades_df is not None:
+        report_dataframes['Trades'] = trades_df.copy()
+    else:
+        _update_log(f"Trades report for {date_str} (T-0) not found.", "ERROR")
+
+    prev_day_ts = current_date_ts
+    for i in range(1, 5):
+        prev_day_ts = xetr_cal.previous_session(prev_day_ts)
+        prev_day_str = prev_day_ts.strftime('%Y%m%d')
+        df_trade_hist = _fetch_report(prev_day_str,
+                                      {"report_name": "Trades", "name_format": "{date}{time}FIS_EOD_{report_name}.csv"},
+                                      "1807", "1810")
+        if df_trade_hist is not None:
+            report_dataframes[f"Trades_T-{i}"] = df_trade_hist.copy()
+        else:
+            _update_log(f"Trades report for {prev_day_str} (T-{i}) not found.", "ERROR")
+
+    _update_log("All search operations complete.")
+    return report_dataframes
+
+
+# --- User Inputs on Main Page ---
+st.subheader("⚙️ Report Parameters")
+col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
+
+with col1:
+    bearer_token = st.text_input("Enter Bearer Token", type="password", help="Your secret authentication token.")
+with col2:
+    report_date = st.date_input("Select Report Date", value=datetime(2025, 8, 11))
+with col3:
+    total_instrument = st.number_input("Total Instruments", min_value=1, value=5238,
+                                       help="Set the total number of instruments.")
+with col4:
+    st.write("&#8203;")
+    generate_button = st.button("Generate Report", type="primary", use_container_width=True)
+
+st.divider()
+
+# --- Main Application Logic ---
+log_expander = st.expander("Activity Log", expanded=True)
+log_placeholder = log_expander.empty()
+log_messages = []
+
+if generate_button:
+    if not bearer_token:
+        st.error("Please enter your Bearer Token.")
+    else:
+        try:
+            log_messages.clear()
+            log_placeholder.info("⏳ Initializing... Reading local files.")
+            try:
+                df_Instrument = pd.read_csv("Instrument list.csv")
+            except FileNotFoundError:
+                log_placeholder.error("Error: 'Instrument list.csv' not found.")
+                st.stop()
+
+            date_str = report_date.strftime("%Y%m%d")
+
+            successfully_downloaded = get_reports(date_str, bearer_token, log_messages, log_placeholder)
+
+            required_dfs = ["ProfitandLoss", "ProfitandLoss_T-1", "ProfitandLoss_T-2", "ProfitandLoss_T-3",
+                            "ProfitandLoss_T-4", "ProfitandLoss_T-5", "Trades", "Trades_T-1", "Trades_T-2",
+                            "Trades_T-3", "Trades_T-4"]
+            missing_dfs = [df for df in required_dfs if df not in successfully_downloaded]
+            if missing_dfs:
+                log_expander.error(f"FATAL: Could not retrieve essential reports: {', '.join(missing_dfs)}.")
+                st.stop()
+
+            log_expander.success("✔️ All required data retrieved. Performing calculations...")
+
+            df_PnL = successfully_downloaded["ProfitandLoss"]
+            df_t1, df_t2, df_t3, df_t4, df_t5 = (successfully_downloaded[f"ProfitandLoss_T-{i}"] for i in range(1, 6))
+            df_trades = successfully_downloaded["Trades"]
+            df_trades_t1, df_trades_t2, df_trades_t3, df_trades_t4 = (successfully_downloaded[f"Trades_T-{i}"] for i in
+                                                                      range(1, 5))
+
+            # --- Calculations ---
+            Orders_Filled_MM = ((df_trades["Portfolio"] == "SCALMM") & (
+                df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))).sum()
+            Orders_Filled_FR = ((df_trades["Portfolio"] == "SCALFRAC") & (
+                df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))).sum()
+            Traded_Instruments_MM = df_trades[(df_trades["Portfolio"] == "SCALMM") & (
+                df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))]['Instrument'].nunique()
+            Traded_Instruments_FR = df_trades[(df_trades["Portfolio"] == "SCALFRAC") & (
+                df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))]['Instrument'].nunique()
+            Total_Turnover_MM = round(df_trades[df_trades['Portfolio'] == 'SCALMM']['Premium'].abs().sum())
+            Total_Turnover_FR = round(df_trades[df_trades['Portfolio'] == 'SCALFRAC']['Premium'].abs().sum())
+            Accepted_RFQ_Turnover_MM = round(df_trades[(df_trades['Portfolio'] == 'SCALMM') & (
+                df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))]['Premium'].abs().sum())
+            Accepted_RFQ_Turnover_FR = round(df_trades[(df_trades['Portfolio'] == 'SCALFRAC') & (
+                df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))]['Premium'].abs().sum())
+            buy_turnover_mm_total = df_trades[(df_trades['Portfolio'] == 'SCALMM') & (
+                df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction'])) & (
+                                                          df_trades['B/S'] == 'Buy')]['Premium'].abs().sum()
+            Accepted_RFQ_Buy_Turnover_MM = round(buy_turnover_mm_total / Accepted_RFQ_Turnover_MM,
+                                                 4) if Accepted_RFQ_Turnover_MM > 0 else 0
+            buy_turnover_fr_total = df_trades[(df_trades['Portfolio'] == 'SCALFRAC') & (
+                df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction'])) & (
+                                                          df_trades['B/S'] == 'Buy')]['Premium'].abs().sum()
+            Accepted_RFQ_Buy_Turnover_FR = round(buy_turnover_fr_total / Accepted_RFQ_Turnover_FR,
+                                                 4) if Accepted_RFQ_Turnover_FR > 0 else 0
+            Daily_PnL_MM = round(df_PnL[df_PnL['Unnamed: 0'] == "SCALMM"]["BTPLD"].iloc[0])
+            Daily_PnL_t1 = round(df_t1[df_t1['Unnamed: 0'] == "SCALMM"]["BTPLD"].iloc[0])
+            Daily_PnL_t2 = round(df_t2[df_t2['Unnamed: 0'] == "SCALMM"]["BTPLD"].iloc[0])
+            Daily_PnL_t3 = round(df_t3[df_t3['Unnamed: 0'] == "SCALMM"]["BTPLD"].iloc[0])
+            Daily_PnL_t4 = round(df_t4[df_t4['Unnamed: 0'] == "SCALMM"]["BTPLD"].iloc[0])
+            Daily_PnL_MA5 = round((Daily_PnL_MM + Daily_PnL_t1 + Daily_PnL_t2 + Daily_PnL_t3 + Daily_PnL_t4) / 5)
+            PnL_per_RFQ = round(Daily_PnL_MM / Orders_Filled_MM if Orders_Filled_MM > 0 else 0, 2)
+            PnL_per_RFQ_Turnover = f"{round((Daily_PnL_MM / Accepted_RFQ_Turnover_MM) * 10000, 2)}bp" if Accepted_RFQ_Turnover_MM > 0 else "0.00bp"
+            Estimated_Execution_Fees_MM = round((Total_Turnover_MM - Accepted_RFQ_Turnover_MM) * 0.00007 * 2 / 3, 2)
+            Net_PnL_per_RFQ_Turnover = f"{round(((Daily_PnL_MM - Estimated_Execution_Fees_MM) / Accepted_RFQ_Turnover_MM) * 10000, 2)}bp" if Accepted_RFQ_Turnover_MM > 0 else "0.00bp"
+            Total_Mtd_PnL_MM = round(
+                df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALMM') & (df_PnL['Unnamed: 0'] != 'SCALMM'), 'BTPLM'].sum())
+            Total_Ytd_PnL_MM = round(
+                df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALMM') & (df_PnL['Unnamed: 0'] != 'SCALMM'), 'BTPL'].sum())
+            Total_Ytd_PnL_t1 = round(
+                df_t1.loc[(df_t1['Portfolio.Name'] == 'SCALMM') & (df_t1['Unnamed: 0'] != 'SCALMM'), 'BTPL'].sum())
+            Daily_PnL_adj = Total_Ytd_PnL_MM - Total_Ytd_PnL_t1
+            Gross_Exposure_MM = round(df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALMM') & (
+                        df_PnL['Unnamed: 0'] != 'SCALMM'), 'Gross Exposure'].sum())
+            Gross_Exposure_FR = round(df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALFRAC') & (
+                        df_PnL['Unnamed: 0'] != 'SCALFRAC'), 'Gross Exposure'].sum())
+            Net_Exposure_MM = round(
+                df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALMM') & (df_PnL['Unnamed: 0'] != 'SCALMM'), 'BVal'].sum())
+            Net_Exposure_FR = round(df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALFRAC') & (
+                        df_PnL['Unnamed: 0'] != 'SCALFRAC'), 'BVal'].sum())
+
+            # --- Assemble Final DataFrames ---
+            Statistics_data = [[Orders_Filled_MM, Orders_Filled_FR], [Traded_Instruments_MM, Traded_Instruments_FR],
+                               [f"{Traded_Instruments_MM / total_instrument:.2%}", ''], [total_instrument, ''],
+                               [f"{Total_Turnover_MM:,.0f}", f"{Total_Turnover_FR:,.0f}"],
+                               [f"{Accepted_RFQ_Turnover_MM:,.0f}", f"{Accepted_RFQ_Turnover_FR:,.0f}"],
+                               [f"{Accepted_RFQ_Buy_Turnover_MM:.2%}", f"{Accepted_RFQ_Buy_Turnover_FR:.2%}"],
+                               [f"{1 - Accepted_RFQ_Buy_Turnover_MM:.2%}", f"{1 - Accepted_RFQ_Buy_Turnover_FR:.2%}"],
+                               [f"{round(Accepted_RFQ_Turnover_MM / Orders_Filled_MM if Orders_Filled_MM > 0 else 0):,.0f}",
+                                ''], [f"{Total_Turnover_MM - Accepted_RFQ_Turnover_MM:,.0f}",
+                                      f"{Total_Turnover_FR - Accepted_RFQ_Turnover_FR:,.0f}"]]
+            row_names_Trading = ['Orders Filled', 'Traded Instruments', 'Traded Instruments %', 'Total Instruments',
+                                 'Total Turnover (€)', 'Accepted RFQ Turnover (€)', 'Accepted RFQ Buy Turnover %',
+                                 'Accepted RFQ Sell Turnover %', 'Average Accepted Order (€)', 'Hedge Volume (€)']
+            df_Trading_Statistics = pd.DataFrame(data=Statistics_data, index=row_names_Trading,
+                                                 columns=['Market Making (SCALMM)', 'Fractional (SCALFRAC)'])
+
+            PnL_data = [f"{Daily_PnL_MM:,.0f}", f"{Daily_PnL_MA5:,.0f}", f"{Daily_PnL_adj:,.0f}", f"{PnL_per_RFQ:,.2f}",
+                        PnL_per_RFQ_Turnover, Net_PnL_per_RFQ_Turnover, f"{Total_Mtd_PnL_MM:,.0f}",
+                        f"{Total_Ytd_PnL_MM:,.0f}", f"{Gross_Exposure_MM + Gross_Exposure_FR:,.0f}",
+                        f"{Net_Exposure_MM + Net_Exposure_FR:,.0f}"]
+            row_names_PnL = ['Daily PnL (€)', 'Daily PnL (MA5) (€)', 'Total Daily PnL (€) Adj', 'PnL per RFQ (€)',
+                             'PnL per RFQ Turnover', 'Net PnL per RFQ Turnover', 'Total MtD PnL (€)',
+                             'Total YtD PnL (€)', 'Gross Exposure (€)', 'Net Exposure (€)']
+            df_PnL_Statistics = pd.DataFrame(data=PnL_data, index=row_names_PnL, columns=['Market Making (SCALMM)'])
+
+            # --- Display Results ---
+            st.subheader("📊 Report Results")
+
+            # Display tables side-by-side in columns
+            col_pnl, col_trading = st.columns(2)
+            with col_pnl:
+                st.markdown("##### PnL Statistics")
+                st.dataframe(df_PnL_Statistics)
+            with col_trading:
+                st.markdown("##### Trading Statistics")
+                st.dataframe(df_Trading_Statistics)
+
+            # --- Display copy-friendly text areas ---
+            st.subheader("📋 Copy-Friendly Report")
+            st.info(
+                "Click inside the box below, then press Ctrl+A (or Cmd+A) and Ctrl+C (or Cmd+C) to copy only the data values.")
+            st.info(
+                "Data is provided in two separate boxes below. Copy the contents of each box and paste it into the corresponding section of your spreadsheet.")
+
+            pnl_tsv = df_PnL_Statistics.to_csv(sep='\t', index=False, header=False)
+            trading_tsv = df_Trading_Statistics.to_csv(sep='\t', index=False, header=False)
+
+            # Create columns for the copy-friendly text areas
+            col_pnl_copy, col_trading_copy = st.columns(2)
+            with col_pnl_copy:
+                st.markdown("###### PnL Statistics Data")
+                st.text_area("PnL Data (for pasting)", pnl_tsv, height=300)
+
+            with col_trading_copy:
+                st.markdown("###### Trading Statistics Data")
+                st.text_area("Trading Data (for pasting)", trading_tsv, height=300)
+
+        except Exception as e:
+            st.error(f"An unexpected error occurred during processing: {e}")
+            st.exception(e)
+
+else:
+    log_placeholder.info("Enter parameters above and click 'Generate Report' to start.")
