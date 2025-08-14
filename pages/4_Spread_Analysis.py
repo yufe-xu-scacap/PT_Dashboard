@@ -101,6 +101,8 @@ def process_spread_data(df: pd.DataFrame, index_df: pd.DataFrame):
         for col in cols_to_convert:
             if col in df_processed.columns:
                 df_processed[col] = pd.to_numeric(df_processed[col], errors='coerce')
+        # Drop rows where ISIN is not a string or is shorter than 2 characters
+        df_processed = df_processed[df_processed['ISIN'].apply(lambda x: isinstance(x, str) and len(x) >= 2)]
         return df_processed
     except KeyError as e:
         st.error(f"Processing failed. A required column is missing from the uploaded file: {e}.")
@@ -128,6 +130,28 @@ def generate_summary(df_subgroup: pd.DataFrame):
     final_summary.loc['Worst Spread Count'] = final_summary.loc['Worst Spread Count'].fillna(0)
 
     return final_summary
+
+
+# --- Analysis display function (No Changes) ---
+def display_country_analysis(country_code, country_df, formatters):
+    """
+    Displays the full analysis block for a given country's data.
+    """
+    st.markdown(f"#### {country_code} Stocks (Total: {len(country_df)})")
+
+    if not country_df.empty:
+        summary_df = generate_summary(country_df)
+        st.dataframe(
+            summary_df.style.apply(highlight_min_max, axis=1)
+            .format(formatters, subset=pd.IndexSlice[['mean', 'median'], :], na_rep='-')
+            .format('{:.0f}', subset=pd.IndexSlice['Worst Spread Count', :], na_rep='0')
+            .set_properties(subset=['(Gettex)'], **{'color': 'grey'})
+        )
+        enabled_venues = display_venue_options(key_prefix=f"{country_code}_country")
+        lower_count = calculate_lower_spread_count(country_df, enabled_venues)
+        st.metric(label="Instruments with Lower Spread than Gettex", value=lower_count)
+    else:
+        st.warning(f"No data to display for {country_code} stocks.")
 
 
 # --- Streamlit UI ---
@@ -158,46 +182,45 @@ if uploaded_file is not None and index_data is not None:
 
         tab_country, tab_index = st.tabs(["Analysis by Country Code", "Analysis by Index"])
 
+        # --- MODIFIED: Country Analysis Tab with new sorting and layout ---
         with tab_country:
             st.subheader("Country Code-Based Summary")
-            col_de, col_us = st.columns(2)
-            df_de = processed_df[processed_df['ISIN'].str.startswith('DE')].copy()
-            df_us = processed_df[processed_df['ISIN'].str.startswith('US')].copy()
+            st.markdown("---")
 
-            with col_de:
-                st.markdown(f"#### German Stocks (Total: {len(df_de)})")
-                if not df_de.empty:
-                    summary_de = generate_summary(df_de)
-                    st.dataframe(
-                        summary_de.style.apply(highlight_min_max, axis=1)
-                        .format(mean_median_formatters, subset=pd.IndexSlice[['mean', 'median'], :], na_rep='-')
-                        .format('{:.0f}', subset=pd.IndexSlice['Worst Spread Count', :], na_rep='0')
-                        # --- MODIFIED: Changed background-color to color ---
-                        .set_properties(subset=['(Gettex)'], **{'color': 'grey'})
-                    )
-                    enabled_de_venues = display_venue_options(key_prefix="de_country")
-                    lower_count_de = calculate_lower_spread_count(df_de, enabled_de_venues)
-                    st.metric(label="Instruments with Lower Spread than Gettex", value=lower_count_de)
-                else:
-                    st.warning("No German stocks found.")
+            # 1. Get instrument counts for each country and sort descending
+            country_counts = processed_df['ISIN'].str[:2].value_counts()
+            all_codes_sorted_by_count = country_counts.index.tolist()
 
-            with col_us:
-                st.markdown(f"#### US Stocks (Total: {len(df_us)})")
-                if not df_us.empty:
-                    summary_us = generate_summary(df_us)
-                    st.dataframe(
-                        summary_us.style.apply(highlight_min_max, axis=1)
-                        .format(mean_median_formatters, subset=pd.IndexSlice[['mean', 'median'], :], na_rep='-')
-                        .format('{:.0f}', subset=pd.IndexSlice['Worst Spread Count', :], na_rep='0')
-                        # --- MODIFIED: Changed background-color to color ---
-                        .set_properties(subset=['(Gettex)'], **{'color': 'grey'})
-                    )
-                    enabled_us_venues = display_venue_options(key_prefix="us_country")
-                    lower_count_us = calculate_lower_spread_count(df_us, enabled_us_venues)
-                    st.metric(label="Instruments with Lower Spread than Gettex", value=lower_count_us)
-                else:
-                    st.warning("No US stocks found.")
+            # 2. Separate into priority ('DE', 'US') and other lists
+            priority_order = ['DE', 'US']
+            priority_codes_present = [code for code in priority_order if code in all_codes_sorted_by_count]
+            other_codes_sorted = [code for code in all_codes_sorted_by_count if code not in priority_codes_present]
 
+            # 3. Display the priority codes ('DE', 'US') in a 2-column top row
+            if priority_codes_present:
+                cols = st.columns(2)
+                for i, code in enumerate(priority_codes_present):
+                    with cols[i]:
+                        country_df = processed_df[processed_df['ISIN'].str.startswith(code)].copy()
+                        display_country_analysis(code, country_df, mean_median_formatters)
+
+            # 4. Display all other codes in a 3-column grid below
+            if other_codes_sorted:
+                st.markdown("---")  # Visual separator
+
+                # Create a 3-column layout
+                col1, col2, col3 = st.columns(3)
+                cols_cycle = [col1, col2, col3]
+
+                for i, code in enumerate(other_codes_sorted):
+                    # Determine which column to place the content in
+                    current_col = cols_cycle[i % 3]
+                    with current_col:
+                        country_df = processed_df[processed_df['ISIN'].str.startswith(code)].copy()
+                        display_country_analysis(code, country_df, mean_median_formatters)
+                        st.markdown("---")  # Separator for visual clarity within columns
+
+        # --- Index Analysis Tab (No Changes) ---
         with tab_index:
             st.subheader("Index-Based Summary")
             layout = [
@@ -221,7 +244,6 @@ if uploaded_file is not None and index_data is not None:
                                 summary_table.style.apply(highlight_min_max, axis=1)
                                 .format(mean_median_formatters, subset=pd.IndexSlice[['mean', 'median'], :], na_rep='-')
                                 .format('{:.0f}', subset=pd.IndexSlice['Worst Spread Count', :], na_rep='0')
-                                # --- MODIFIED: Changed background-color to color ---
                                 .set_properties(subset=['(Gettex)'], **{'color': 'grey'})
                             )
                             key_prefix = index_name.replace(" ", "_").replace("-", "_")

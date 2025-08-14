@@ -527,23 +527,50 @@ if generate_button:
                 st.markdown("##### Trading Statistics")
                 st.dataframe(df_Trading_Statistics, use_container_width=True)
 
+                # --- Previous code for displaying statistics tables goes here ---
+
             st.subheader("📋 Copy-Friendly Report")
-            # --- MODIFICATION START: Added clickable links ---
             st.markdown("""
-            <a href="https://docs.google.com/spreadsheets/d/1Fd6PYOgCu3IuSo5DUQehfJcZhNnPLfoZFlrBDR4AAlw/edit?usp=sharing" target="_blank">Click here for the table template</a> | <a href="https://docs.google.com/document/d/1ij66_05uM6PPmSWehV3Pk6bfTL9FgOpd3tRIGeo4pVo/edit?usp=sharing" target="_blank">Click here for the email template</a>
-            """, unsafe_allow_html=True)
-            # --- MODIFICATION END ---
+                                                    <a href="https://docs.google.com/spreadsheets/d/1Fd6PYOgCu3IuSo5DUQehfJcZhNnPLfoZFlrBDR4AAlw/edit?usp=sharing" target="_blank">Click here for the table template</a> | <a href="https://docs.google.com/document/d/1ij66_05uM6PPmSWehV3Pk6bfTL9FgOpd3tRIGeo4pVo/edit?usp=sharing" target="_blank">Click here for the email template</a>
+                                                    """, unsafe_allow_html=True)
+
             st.info(
-                "Click inside the box below, then press Ctrl+A (or Cmd+A) and Ctrl+C (or Cmd+C) to copy only the data values.")
-            pnl_tsv = df_PnL_Statistics.to_csv(sep='\t', index=False, header=False)
-            trading_tsv = df_Trading_Statistics.to_csv(sep='\t', index=False, header=False)
-            col_pnl_copy, col_trading_copy = st.columns(2)
-            with col_pnl_copy:
-                st.markdown("###### PnL Statistics Data (for pasting at #C3)")
-                st.text_area("", pnl_tsv, height=260)
-            with col_trading_copy:
-                st.markdown("###### Trading Statistics Data (for pasting at #C22)")
-                st.text_area("", trading_tsv, height=260)
+                "Click inside the box below, then press Ctrl+A and Ctrl+C to copy all report data at #C3.")
+
+            # MODIFICATION START: Combine ALL data into a single string for one clipboard
+
+            # 1. Prepare the PnL data string with its internal blank line
+            # 1. Prepare the PnL data string with its internal blank line
+            pnl_part1 = df_PnL_Statistics.iloc[0:8]
+            pnl_part2 = df_PnL_Statistics.iloc[8:]
+            pnl_tsv_part1 = pnl_part1.to_csv(sep='\t', index=False, header=False).strip()
+            pnl_tsv_part2 = pnl_part2.to_csv(sep='\t', index=False, header=False).strip()
+            pnl_tsv_combined = f"{pnl_tsv_part1}\n\n{pnl_tsv_part2}"
+
+            # MODIFICATION START: Create a custom header for the Trading Statistics data
+
+            # 2a. Define the exact header text you want. The '\t' creates a tab between them.
+            custom_header = "Market Making\tFractional"
+
+            # 2b. Get the trading data without any header
+            trading_data_only = df_Trading_Statistics.to_csv(sep='\t', index=False, header=False).strip()
+
+            # 2c. Join your custom header with the trading data
+            trading_tsv = f"{custom_header}\n{trading_data_only}"
+
+            # MODIFICATION END
+
+            # 3. Create the final, all-in-one string
+            all_in_one_tsv = f"{pnl_tsv_combined}\n\n\n\n\n\n\n\n{trading_tsv}"
+
+            # 4. Display in a single, large text area
+            st.text_area(
+                label="Combined PnL and Trading Data",
+                value=all_in_one_tsv,
+                height=100,
+                key="all_in_one_data",
+                label_visibility="collapsed"
+            )
 
             st.info("You can right-click on any chart below and select 'Copy Image' to paste it in report mail.")
 
