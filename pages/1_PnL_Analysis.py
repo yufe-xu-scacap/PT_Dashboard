@@ -141,32 +141,64 @@ def get_reports(date: str, bearer_token: str, log_list: List[str], log_placehold
     return report_dataframes
 
 
+from typing import Dict, Optional, List, Tuple
+
+# ... other imports
+
+from typing import Dict, Optional, List, Tuple
+
+# ... other imports
+
 def create_table_image(
         df: pd.DataFrame,
         width: int,
         height: int,
         col_widths: List[int],
+        align_header: List[str],
+        align_cells: List[str],
+        # Add this new optional parameter for styling
+        row_styles: Optional[Dict[str, Dict[str, str]]] = None,
         table_width_fraction: float = 1.0
 ):
     """
-    Generates a PNG image for a DataFrame table, constraining it
-    to a fraction of the total image width.
+    Generates a PNG image for a DataFrame table, with conditional row styling.
     """
+    if row_styles is None:
+        row_styles = {}
+
+    # Define default colors
+    default_fill_color = 'white'
+    default_font_color = '#101112' # Dark grey
+
+    # Generate lists of colors for each row based on the styling rules
+    row_fill_colors = [
+        row_styles.get(row_name, {}).get('fill_color', default_fill_color) for row_name in df.index
+    ]
+    row_font_colors = [
+        row_styles.get(row_name, {}).get('font_color', default_font_color) for row_name in df.index
+    ]
+
+    # The colors need to be applied to every cell in the row.
+    # We create a list of lists, one for each column in the table.
+    num_table_cols = len(df.columns) + 1  # +1 for the index column
+    final_fill_colors = [row_fill_colors] * num_table_cols
+    final_font_colors = [row_font_colors] * num_table_cols
+
     fig = go.Figure(data=[go.Table(
         domain=dict(x=[0, table_width_fraction], y=[0, 1]),
         header=dict(
             values=[f"<b>{df.index.name}</b>"] + list(df.columns),
             fill_color='#6BDBCB',
-            align='left',
+            align=align_header,
             font=dict(color='#101112', size=18),
-            height=40
+            height=35
         ),
         cells=dict(
             values=[df.index.tolist()] + [df[col] for col in df.columns],
-            fill_color='white',
-            align='left',
-            font=dict(color='#101112', size=16),
-            height=35
+            fill_color=final_fill_colors,  # Use the new color list
+            align=align_cells,
+            font=dict(color=final_font_colors, size=16),  # Use the new font color list
+            height=28
         ),
         columnwidth=col_widths
     )])
@@ -418,8 +450,8 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         PNL_PLOT_WIDTH, PNL_PLOT_HEIGHT = 1600, 900
         TURNOVER_PLOT_WIDTH, TURNOVER_PLOT_HEIGHT = 1600, 900
         TOP_PERF_PLOT_WIDTH, TOP_PERF_PLOT_HEIGHT = 1600, 1000
-        PNL_TABLE_WIDTH, PNL_TABLE_HEIGHT = 720, 440
-        TRADING_TABLE_WIDTH, TRADING_TABLE_HEIGHT = 720, 440
+        PNL_TABLE_WIDTH, PNL_TABLE_HEIGHT = 720, 360
+        TRADING_TABLE_WIDTH, TRADING_TABLE_HEIGHT = 720, 360
 
         update_log("Processing report data...", log_list, log_placeholder)
 
@@ -572,14 +604,14 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
                     trade_metrics['PnL_per_RFQ'], trade_metrics['PnL_per_RFQ_Turnover'],
                     trade_metrics['Net_PnL_per_RFQ_Turnover'], f"{Total_Mtd_PnL_MM:,.0f}", f"{Total_Ytd_PnL_MM:,.0f}",
                     f"{Gross_Exposure_MM + Gross_Exposure_FR:,.0f}", f"{Net_Exposure_MM + Net_Exposure_FR:,.0f}"]
-        row_names_PnL = ['Daily PnL (€)', 'Daily PnL (MA5) (€)', 'Total Daily PnL (€) Adj', 'PnL per RFQ (€)',
+        row_names_PnL = ['Daily PnL (€)', 'Daily PnL (MA5) (€)\uFE61', 'Total Daily PnL (€) Adj', 'PnL per RFQ (€)',
                          'PnL per RFQ Turnover', 'Net PnL per RFQ Turnover', 'Total MtD PnL (€)', 'Total YtD PnL (€)',
                          'Gross Exposure (€)', 'Net Exposure (€)']
         df_PnL_Statistics = pd.DataFrame(data=PnL_data, index=row_names_PnL, columns=['Market Making'])
         df_PnL_Statistics.index.name = ""
 
         # --- Chart Data Calculation ---
-        update_log("📊 Performing extended calculations for charts...", log_list, log_placeholder)
+        update_log("Performing extended calculations for charts...", log_list, log_placeholder)
         xetr_cal = xcals.get_calendar("XETR")
         # Use the report_date passed into the function, not the dataframe
         date_mapping_data = [{'Term': 'T-0', 'Date': report_date.strftime('%Y%m%d')}]
@@ -629,11 +661,31 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
             unsafe_allow_html=True)
         st.info(
             "You can right-click on any chart or table below and select 'Copy Image' to paste it in your report mail.")
-        pnl_table_png = create_table_image(df=df_PnL_Statistics, width=PNL_TABLE_WIDTH, height=PNL_TABLE_HEIGHT,
-                                           col_widths=[2, 1, 1], table_width_fraction=0.75)
+
+        # --- NEW: Define styles for the PnL table ---
+        pnl_row_styles = {
+            'PnL per RFQ Turnover': {'fill_color': 'rgb(64, 64, 65)', 'font_color': 'white'},
+            'Net PnL per RFQ Turnover': {'fill_color': 'rgb(64, 64, 65)', 'font_color': 'white'}
+        }
+
+        # --- MODIFIED: Pass the new styles dictionary to the function call ---
+        pnl_table_png = create_table_image(df=df_PnL_Statistics,
+                                           width=PNL_TABLE_WIDTH,
+                                           height=PNL_TABLE_HEIGHT,
+                                           col_widths=[2, 1],
+                                           table_width_fraction=0.75,
+                                           align_header=['left', 'right'],
+                                           align_cells=['left', 'right'],
+                                           row_styles=pnl_row_styles)  # <-- Pass the styles here
         st.image(pnl_table_png, caption="")
-        trading_table_png = create_table_image(df=df_Trading_Statistics, width=TRADING_TABLE_WIDTH,
-                                               height=TRADING_TABLE_HEIGHT, col_widths=[2, 1, 1])
+
+        # --- The rest of your code remains the same ---
+        trading_table_png = create_table_image(df=df_Trading_Statistics,
+                                               width=TRADING_TABLE_WIDTH,
+                                               height=TRADING_TABLE_HEIGHT,
+                                               col_widths=[2, 1, 1],
+                                               align_header=['left', 'right', 'right'],
+                                               align_cells=['left', 'right', 'right'])  # No styles passed here
         st.image(trading_table_png, caption="")
         pnl_plot_png = create_pnl_plot(daily_intraday_pnl, overnight_pnl_data, win_rate_data, df_pnl_turnover, df_date,
                                        width=PNL_PLOT_WIDTH, height=PNL_PLOT_HEIGHT)
@@ -679,7 +731,7 @@ if 'pnl_override' not in st.session_state:
 st.subheader("Report Parameters")
 col1, col2, col3 = st.columns([3, 1.5, 1.5])
 with col1:
-    bearer_token = st.text_input("Enter Bearer Token", type="password", help="Your secret authentication token.")
+    bearer_token = st.text_input("Enter Bearer Token", type="password", help="https://franz.agent-tool.scalable.capital/misc/s3-access/prod-market-making_trade-reports_scalable-fis?bucketPath=fis%2F")
 with col2:
     report_date = st.date_input("Select Report Date", value=datetime.now(ZoneInfo("Europe/Berlin")))
 with col3:
@@ -779,7 +831,7 @@ if st.session_state.report_data:
         st.warning("Cannot display adjustment controls because Trades or PnL data for T-0 is missing.")
 
 # Always update the log display at the end of every script run
-update_log("UI ready.", st.session_state.log_messages, log_placeholder)
+update_log("Updated with latest input...", st.session_state.log_messages, log_placeholder)
 
 # Show initial message if the app has just started
 if not st.session_state.log_messages:
