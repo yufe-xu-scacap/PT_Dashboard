@@ -12,3 +12,4 @@ matplotlib
 seaborn
 exchange_calendars
 pandas-market-calendars
+kaleido
