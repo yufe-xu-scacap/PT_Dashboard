@@ -14,6 +14,6 @@ pip install -r requirements.txt
 echo =============================================
 echo  Starting the Streamlit App...
 echo =============================================
-streamlit run app.py
+streamlit run Main_Page.py
 
 pause
