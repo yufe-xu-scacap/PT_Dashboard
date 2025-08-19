@@ -354,28 +354,58 @@ def create_top_performers_plot(df_PnL, df_trades, df_Instrument, width: int, hei
         by='Total PnL (€)', ascending=False).reset_index(drop=True)
     df_top_performers = df_top_performers[['ISIN', 'Security Name', 'Instrument Type', 'Turnover (€)', 'Total PnL (€)']]
     df_plot = df_top_performers.iloc[::-1].copy()
+
+    # Ensure 'Security Name' is a string to prevent errors, filling missing names
+    df_plot['Security Name'] = df_plot['Security Name'].fillna('Unknown Instrument').astype(str)
+
     df_plot['Abs_PnL'] = df_plot['Total PnL (€)'].abs()
     df_plot['Label'] = [f"{pnl:,.0f}€ (Turnover: {turnover:,.0f}€)" for pnl, turnover in
                         zip(df_plot['Total PnL (€)'], df_plot['Turnover (€)'])]
+
+    ### --- REMOVED --- ###
+    # We no longer need to truncate the names.
+    # df_plot['Security Name Short'] = ...
+    ### --- END REMOVED --- ###
+
+    ### --- NEW DYNAMIC MARGIN CALCULATION --- ###
+    try:
+        # Find the length of the longest security name
+        longest_name_length = df_plot['Security Name'].str.len().max()
+        # Calculate margin: base padding + (pixels per character * length)
+        # We estimate ~8 pixels per character for the font size used.
+        left_margin = 70 + (longest_name_length * 8)
+    except (ValueError, TypeError):
+        # Fallback to a default margin if calculation fails (e.g., no data)
+        left_margin = 250
+    ### --- END NEW --- ###
+
     colors = ['#6BDBCB' if pnl > 0 else '#F79880' for pnl in df_plot['Total PnL (€)']]
     fig = go.Figure()
-    fig.add_trace(go.Bar(x=df_plot['Abs_PnL'], y=df_plot['Security Name'], orientation='h', marker_color=colors,
-                         text=df_plot['Label'], textposition='auto', textfont=dict(size=16, family="Arial, sans-serif"),
-                         hovertemplate=(
-                             '<b>%{customdata[0]}</b><br>ISIN: %{customdata[1]}<br>PnL: %{customdata[2]:,.0f}€<br>Turnover: %{customdata[3]:,.0f}€<extra></extra>'),
-                         customdata=df_plot[['Security Name', 'ISIN', 'Total PnL (€)', 'Turnover (€)']].values))
+    fig.add_trace(go.Bar(
+        x=df_plot['Abs_PnL'],
+        y=df_plot['Security Name'],  ### --- MODIFIED --- ### Use the original, full name for the Y-axis
+        orientation='h',
+        marker_color=colors,
+        text=df_plot['Label'],
+        textposition='auto',
+        textfont=dict(size=16, family="Arial, sans-serif"),
+        hovertemplate=(
+            '<b>%{customdata[0]}</b><br>ISIN: %{customdata[1]}<br>PnL: %{customdata[2]:,.0f}€<br>Turnover: %{customdata[3]:,.0f}€<extra></extra>'),
+        customdata=df_plot[['Security Name', 'ISIN', 'Total PnL (€)', 'Turnover (€)']].values))
+
     fig.update_layout(
         title=dict(text='<b>Top 10 Winners & Losers by PnL</b>', y=0.95, x=0.5, xanchor='center', yanchor='top',
                    font=dict(size=28, color='#101112', family="Arial, sans-serif")), plot_bgcolor='white',
         paper_bgcolor='white', font=dict(family="Arial, sans-serif", color='#101112'),
-        margin=dict(t=80, b=80, l=250, r=40), showlegend=False,
+        ### --- MODIFIED --- ### Use the new dynamic left margin
+        margin=dict(t=80, b=80, l=left_margin, r=40),
+        showlegend=False,
         xaxis=dict(title='Daily PnL (€)', range=[0, df_plot['Abs_PnL'].max() * 1.05], title_font=dict(size=22),
                    tickfont=dict(size=20), tickformat=',.0f', showgrid=False, showline=True, linewidth=1,
                    linecolor='#101112', mirror=True),
         yaxis=dict(title='', type='category', tickfont=dict(size=16), showline=True, linewidth=1, linecolor='#101112',
                    mirror=True))
     return pio.to_image(fig, format='png', width=width, height=height, scale=1)
-
 
 ### NEW ###
 def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date: datetime, total_instrument: int, log_list: List[str], log_placeholder, pnl_override: Optional[Dict[str, float]] = None):
@@ -403,7 +433,7 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         df_trades = report_data.get("Trades")
         df_Instrument = pd.read_csv("Instrument list.csv")
 
-        # --- APPLY PNL OVERRIDE IF PROVIDED ---
+        # --- APPLY PNL OVERRIDE IF PROVIDED --- ### MODIFIED SECTION ###
         if pnl_override:
             isin_to_change = pnl_override.get("isin")
             new_pnl_value = pnl_override.get("pnl")
@@ -415,17 +445,30 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
                     original_pnl_val = original_pnl_row['BTPLD'].iloc[0]
                     pnl_difference = new_pnl_value - original_pnl_val
 
-                    # Update the specific ISIN's PnL in our local copy
-                    df_PnL.loc[df_PnL['Unnamed: 0'] == isin_to_change, 'BTPLD'] = new_pnl_value
-                    # Update the total SCALMM PnL by the same difference
-                    df_PnL.loc[df_PnL['Unnamed: 0'] == 'SCALMM', 'BTPLD'] += pnl_difference
+                    # --- Get indices to ensure safe modification ---
+                    isin_index = df_PnL.index[df_PnL['Unnamed: 0'] == isin_to_change].tolist()
+                    scalmm_index = df_PnL.index[df_PnL['Unnamed: 0'] == 'SCALMM'].tolist()
 
-                    update_log(
-                        f"Applied override: ISIN {isin_to_change} PnL changed to {new_pnl_value:,.2f}. Total PnL adjusted.",
-                        log_list, log_placeholder, "INFO")
+                    if isin_index and scalmm_index:
+                        # --- Apply change to the specific ISIN ---
+                        # Update Daily PnL to the new value
+                        df_PnL.loc[isin_index[0], 'BTPLD'] = new_pnl_value
+                        # Update Monthly and Yearly PnL by the difference
+                        df_PnL.loc[isin_index[0], 'BTPLM'] += pnl_difference # Added this line
+                        df_PnL.loc[isin_index[0], 'BTPL'] += pnl_difference  # Added this line
+
+                        # --- Apply change to the SCALMM total row ---
+                        df_PnL.loc[scalmm_index[0], 'BTPLD'] += pnl_difference
+                        df_PnL.loc[scalmm_index[0], 'BTPLM'] += pnl_difference # Added this line
+                        df_PnL.loc[scalmm_index[0], 'BTPL'] += pnl_difference  # Added this line
+
+                        update_log(
+                            f"Applied override: ISIN {isin_to_change} PnL changed. Daily, Monthly, and Yearly totals adjusted by {pnl_difference:,.2f}.",
+                            log_list, log_placeholder, "INFO")
                 else:
                     update_log(f"Could not apply override: ISIN {isin_to_change} not found in PnL report.", log_list,
                                log_placeholder, "WARNING")
+        ### END OF MODIFIED SECTION ###
 
         # --- All calculations will now use the potentially modified df_PnL ---
         Daily_PnL_MM = round(df_PnL[df_PnL['Unnamed: 0'] == "SCALMM"]["BTPLD"].iloc[0])
