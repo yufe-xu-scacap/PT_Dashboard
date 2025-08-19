@@ -6,3 +6,9 @@ pandas-market-calendars
 openpyxl
 seaborn
 matplotlib
+streamlit
+plotly
+matplotlib
+seaborn
+exchange_calendars
+pandas-market-calendars
