@@ -222,17 +222,24 @@ else:
 # --- 4. BACKGROUND CLICK SIMULATOR UI ---
 st.divider()
 st.header("🖱️ Background Click Simulator")
-st.info(f"This tool will automate clicks in the window named:\n**{CLICKER_TARGET_WINDOW_TITLE}**")
 
-# --- LAYOUT CHANGE IS HERE ---
-col10, col11, col12 = st.columns([2, 3, 6])
-with col10:
+# --- LAYOUT CHANGE IS HERE: 4 columns for Toggle, Status, Input, and Log ---
+toggle_col, status_col, interval_col, log_col = st.columns([2, 2, 2, 6])
+
+with toggle_col:
     st.session_state.is_running = st.toggle(
         "Start / Stop Clicker",
         value=st.session_state.is_running,
         key='click_run_toggle'
     )
-with col11:
+
+with status_col:
+    if st.session_state.is_running:
+        st.success("Status: Enabled")
+    else:
+        st.error("Status: Disabled")
+
+with interval_col:
     click_interval = st.number_input(
         "Interval (sec)",
         min_value=1,
@@ -240,13 +247,15 @@ with col11:
         step=1,
         help="The delay in seconds between each full sequence of clicks."
     )
-with col12:
+
+with log_col:
     with st.expander(f"Clicker Log: {st.session_state.click_log[-1]}", expanded=False):
         log_container = st.container(height=200)
         for msg in reversed(st.session_state.click_log):
             log_container.text(msg)
 # --- END OF LAYOUT CHANGE ---
 
+# Placeholders for status text and progress bar, which will appear below the controls
 status_placeholder = st.empty()
 progress_placeholder = st.empty()
 
@@ -358,15 +367,16 @@ if st.session_state.is_running and st.session_state.click_points:
             except Exception: pass
         st.session_state.click_log.append("Sequence complete. Waiting...")
 
+        # This section creates the countdown progress bar
         status_placeholder.text(f"Next sequence in {click_interval} seconds...")
         progress_bar = progress_placeholder.progress(0)
         for i in range(100):
-            time.sleep(click_interval / 100)
-            progress_bar.progress(i + 1)
+            time.sleep(click_interval / 100) # Wait for a fraction of the total interval
+            progress_bar.progress(i + 1)     # Update the progress bar
         progress_placeholder.empty()
         st.rerun()
 elif not st.session_state.is_running and 'click_run_toggle' in st.session_state:
-     status_placeholder.success("Status: Stopped. Ready to start.")
+     status_placeholder.empty() # Clear status text when stopped
 
 
 # --- MASTER RERUN CONTROLLER ---
