@@ -13,3 +13,10 @@ seaborn
 exchange_calendars
 pandas-market-calendars
 kaleido
+pygame
+PyGetWindow
+PyAutoGUI
+pytesseract
+Pillow
+pywin32
+pynput
