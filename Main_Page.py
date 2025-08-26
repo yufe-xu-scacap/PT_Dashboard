@@ -134,6 +134,7 @@ st.sidebar.success("Select a page above.")
 st.info("Powered by Hedge Fund Technology!")
 
 # --- 1. HIGH TOUCH ALERT UI ---
+# --- 1. HIGH TOUCH ALERT UI (CORRECTED) ---
 st.divider()
 st.header("🔊 Sound Alert")
 if isinstance(high_touch_sound, str):
@@ -143,13 +144,18 @@ else:
     with col1:
         run_high_touch = st.toggle("Start High Touch Monitoring", key="ht_toggle")
     with col2:
-        st.success("Status: Enabled" if run_high_touch else "Status: Disabled")
+        # --- FIX STARTS HERE ---
+        if run_high_touch:
+            st.success("Status: Enabled")
+        else:
+            st.error("Status: Disabled")
+        # --- FIX ENDS HERE ---
     with col3:
         with st.expander(f"Log: {st.session_state.high_touch_log[-1]}", expanded=False):
             log_container = st.container(height=200)
             for msg in reversed(st.session_state.high_touch_log): log_container.text(msg)
 
-# --- 2. HALTER ALERT UI (RENAMED) ---
+# --- 2. HALTER ALERT UI (CORRECTED) ---
 st.divider()
 if isinstance(halter_sound, str):
     st.error(f"Failed to load sound file: {halter_sound}")
@@ -158,13 +164,18 @@ else:
     with col4:
         run_halter = st.toggle("Start HALTER Monitoring", key="halter_toggle")
     with col5:
-        st.success("Status: Enabled" if run_halter else "Status: Disabled")
+        # --- FIX STARTS HERE ---
+        if run_halter:
+            st.success("Status: Enabled")
+        else:
+            st.error("Status: Disabled")
+        # --- FIX ENDS HERE ---
     with col6:
         with st.expander(f"Log: {st.session_state.halter_log[-1]}", expanded=False):
             log_container = st.container(height=200)
             for msg in reversed(st.session_state.halter_log): log_container.text(msg)
 
-# --- 3. GROSS EXPOSURE ALERT UI (NEW) ---
+# --- 3. GROSS EXPOSURE ALERT UI (CORRECTED) ---
 st.divider()
 if not all(gross_exposure_sounds.values()):
     st.error("One or more Gross Exposure sound files failed to load. Check paths.")
@@ -173,7 +184,12 @@ else:
     with col7:
         run_gross_exp = st.toggle("Start Gross Exposure Monitoring", key="gross_exp_toggle")
     with col8:
-        st.success("Status: Enabled" if run_gross_exp else "Status: Disabled")
+        # --- FIX STARTS HERE ---
+        if run_gross_exp:
+            st.success("Status: Enabled")
+        else:
+            st.error("Status: Disabled")
+        # --- FIX ENDS HERE ---
     with col9:
         with st.expander(f"Log: {st.session_state.gross_exp_log[-1]}", expanded=False):
             log_container = st.container(height=200)
