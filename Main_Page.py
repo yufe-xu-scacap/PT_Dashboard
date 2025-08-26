@@ -162,7 +162,7 @@ if 'gross_exp_last_alert' not in st.session_state: st.session_state.gross_exp_la
 if 'click_points' not in st.session_state: st.session_state.click_points = []
 if 'is_running' not in st.session_state: st.session_state.is_running = False
 if 'capture_mode' not in st.session_state: st.session_state.capture_mode = False
-if 'click_log' not in st.session_state: st.session_state.click_log = ["Welcome! Start the automation to begin."]
+if 'click_log' not in st.session_state: st.session_state.click_log = ["Ready."]
 
 
 # --- MAIN PAGE LAYOUT ---
@@ -224,11 +224,28 @@ st.divider()
 st.header("🖱️ Background Click Simulator")
 st.info(f"This tool will automate clicks in the window named:\n**{CLICKER_TARGET_WINDOW_TITLE}**")
 
-col10, col11 = st.columns([1, 1])
+# --- LAYOUT CHANGE IS HERE ---
+col10, col11, col12 = st.columns([2, 3, 6])
 with col10:
-    st.session_state.is_running = st.toggle("Start / Stop Click Automation", value=st.session_state.is_running, key='click_run_toggle')
+    st.session_state.is_running = st.toggle(
+        "Start / Stop Clicker",
+        value=st.session_state.is_running,
+        key='click_run_toggle'
+    )
 with col11:
-    click_interval = st.number_input("Interval between sequences (seconds)", min_value=1, value=20, step=1)
+    click_interval = st.number_input(
+        "Interval (sec)",
+        min_value=1,
+        value=20,
+        step=1,
+        help="The delay in seconds between each full sequence of clicks."
+    )
+with col12:
+    with st.expander(f"Clicker Log: {st.session_state.click_log[-1]}", expanded=False):
+        log_container = st.container(height=200)
+        for msg in reversed(st.session_state.click_log):
+            log_container.text(msg)
+# --- END OF LAYOUT CHANGE ---
 
 status_placeholder = st.empty()
 progress_placeholder = st.empty()
@@ -240,7 +257,6 @@ timestamp = time.strftime('%H:%M:%S')
 
 # 1. High Touch Logic
 if run_high_touch and not isinstance(high_touch_sound, str):
-    # ... (rest of the high touch logic is the same)
     found = any(term in title for term in HIGH_TOUCH_SEARCH_TERMS for title in gw.getAllTitles())
     log_msg = f"[{timestamp}] " + ("Found Quote Request -> Sound PLAYED." if found else "Check complete. No match.")
     if st.session_state.high_touch_log[-1] != log_msg:
@@ -271,7 +287,6 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
     if not rect:
         log_msg = f"[{timestamp}] Window '{GROSS_EXP_WINDOW_TITLE}' not found."
     else:
-        # ... (rest of gross exposure logic is the same)
         text = extract_text_from_image(capture_screenshot(rect))
         value = parse_gross_exposure_value(text)
         if value is not None:
@@ -352,11 +367,6 @@ if st.session_state.is_running and st.session_state.click_points:
         st.rerun()
 elif not st.session_state.is_running and 'click_run_toggle' in st.session_state:
      status_placeholder.success("Status: Stopped. Ready to start.")
-
-with st.expander("Show Clicker Activity Log", expanded=True):
-    log_container = st.container(height=200)
-    for msg in reversed(st.session_state.click_log):
-        log_container.text(msg)
 
 
 # --- MASTER RERUN CONTROLLER ---
