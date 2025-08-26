@@ -1,15 +1,15 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
 import pygame
 import pygetwindow as gw
 import time
-from datetime import datetime
+from datetime importdatetime
 
+# Imports for OCR alerts
 import pyautogui
 import pytesseract
 from PIL import Image
 import win32gui
+import re  # Import regular expressions for number parsing
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -20,12 +20,11 @@ st.set_page_config(
 
 # --- IMPORTANT: TESSERACT CONFIGURATION ---
 # The user MUST ensure this path is correct for their system.
-# This is the default installation path on Windows.
 try:
     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 except Exception as e:
-    st.error(f"Tesseract not configured: {e}. The OCR alert will not work.")
-    st.info("Please install Tesseract-OCR from the official website and ensure the path above is correct.")
+    st.error(f"Tesseract not configured: {e}. OCR-based alerts will not work.")
+    st.info("Please install Tesseract-OCR and ensure the path above is correct.")
 
 # --- CSS STYLING ---
 st.markdown(
@@ -41,42 +40,58 @@ st.markdown(
 )
 
 # --- SCRIPT CONSTANTS ---
-# Constants for the first alert (High Touch)
+# General
+CHECK_INTERVAL = 5  # Seconds
+
+# 1. High Touch Alert
 HIGH_TOUCH_SOUND_FILE = 'Sounds/notify.wav'
 HIGH_TOUCH_SEARCH_TERMS = ["Quote Request"]
 
-# Constants for the second alert (OCR)
-OCR_SOUND_FILE = 'Sounds/error.wav'  # Using a different sound for the error alert
-OCR_WINDOW_TITLE = "Scalable_Quoting_Version_1.0"
-OCR_SEARCH_TERMS = ['halterr', 'unkn', 'malterr', 'malter', 'halter', 'unknown']
+# 2. HALTER Alert (Previously OCR Error Alert)
+HALTER_SOUND_FILE = 'Sounds/error.wav'
+HALTER_WINDOW_TITLE = "Scalable_Quoting_Version_1.0"
+HALTER_SEARCH_TERMS = ['halterr', 'unkn', 'malterr', 'malter', 'halter', 'unknown']
 
-# General constant
-CHECK_INTERVAL = 5  # Seconds
+# 3. Gross Exposure Alert (NEW)
+GROSS_EXP_WINDOW_TITLE = "Scalable_Hedging_OCR"  # Partial title of the target window
+GROSS_EXP_SOUND_FILES = {
+    6000000: 'Sounds/Alert_6M.wav',  # Sound for > 6 Million
+    8000000: 'Sounds/Alert_8M.wav',  # Sound for > 8 Million
+    10000000: 'Sounds/Alert_10M.wav'  # Sound for > 10 Million
+}
+GROSS_EXP_COOLDOWN = 120  # Seconds between alerts to prevent spam
 
 
 # --- HELPER FUNCTIONS ---
 
-# Function to initialize sound system (cached)
 @st.cache_resource
-def initialize_sound(file_path):
-    """Initializes the pygame mixer and loads a sound file."""
-    try:
-        # Initialize mixer only once
-        if not pygame.mixer.get_init():
-            pygame.mixer.init()
-        sound = pygame.mixer.Sound(file_path)
-        return sound
-    except Exception as e:
-        return str(e)
+def initialize_sounds(file_paths):
+    """Initializes pygame and loads one or more sound files."""
+    if not pygame.mixer.get_init():
+        pygame.mixer.init()
+
+    sounds = {}
+    if isinstance(file_paths, dict):  # For Gross Exposure thresholds
+        for key, path in file_paths.items():
+            try:
+                sounds[key] = pygame.mixer.Sound(path)
+            except Exception as e:
+                st.error(f"Failed to load sound for threshold {key} at '{path}': {e}")
+                sounds[key] = None
+        return sounds
+    else:  # For single sound files
+        try:
+            return pygame.mixer.Sound(file_paths)
+        except Exception as e:
+            return str(e)
 
 
-# Functions for the OCR alert
-def get_window_rect(window_title):
-    """Finds a window by title and returns its rectangle coordinates."""
+# OCR-related functions
+def find_window_by_title(title):
+    """Finds an exact window title."""
     try:
-        window = gw.getWindowsWithTitle(window_title)[0]
-        if window:
-            return (window.left, window.top, window.width, window.height)
+        window = gw.getWindowsWithTitle(title)[0]
+        return (window.left, window.top, window.width, window.height) if window else None
     except IndexError:
         return None
 
@@ -92,109 +107,141 @@ def extract_text_from_image(image):
     return pytesseract.image_to_string(image, config=config).lower()
 
 
+def parse_gross_exposure_value(text):
+    """Parses the specific numeric value from the OCR text using regex."""
+    # Looks for "EUR", followed by space(s), then digits and spaces, ending with "ADS"
+    match = re.search(r"eur\s([\d\s]+)ads", text)
+    if match:
+        value_string = match.group(1).replace(" ", "")
+        return int(value_string)
+    return None
+
+
 # --- INITIALIZE SOUND OBJECTS ---
-high_touch_sound = initialize_sound(HIGH_TOUCH_SOUND_FILE)
-ocr_alert_sound = initialize_sound(OCR_SOUND_FILE)
+high_touch_sound = initialize_sounds(HIGH_TOUCH_SOUND_FILE)
+halter_sound = initialize_sounds(HALTER_SOUND_FILE)
+gross_exposure_sounds = initialize_sounds(GROSS_EXP_SOUND_FILES)
 
 # --- INITIALIZE SESSION STATE ---
-if 'high_touch_log' not in st.session_state:
-    st.session_state.high_touch_log = ["Welcome! The High Touch alert is ready."]
-if 'ocr_log' not in st.session_state:
-    st.session_state.ocr_log = ["Welcome! The OCR Error alert is ready."]
+if 'high_touch_log' not in st.session_state: st.session_state.high_touch_log = ["Ready."]
+if 'halter_log' not in st.session_state: st.session_state.halter_log = ["Ready."]
+if 'gross_exp_log' not in st.session_state: st.session_state.gross_exp_log = ["Ready."]
+if 'gross_exp_last_alert' not in st.session_state: st.session_state.gross_exp_last_alert = 0
 
 # --- MAIN PAGE LAYOUT ---
 st.title("PT Dashboard")
 st.sidebar.success("Select a page above.")
 st.info("Powered by Hedge Fund Technology!")
 
+# --- 1. HIGH TOUCH ALERT UI ---
 st.divider()
-
-# --- HIGH TOUCH ALERT UI ---
 st.header("🔊 High Touch Alert")
-
-# Check if the sound file loaded correctly
 if isinstance(high_touch_sound, str):
-    st.error(f"Failed to load High Touch sound file: {high_touch_sound}")
-    st.warning(f"Please ensure the path is correct. Current Path: {HIGH_TOUCH_SOUND_FILE}")
+    st.error(f"Failed to load sound file: {high_touch_sound}")
 else:
     col1, col2, col3 = st.columns([2, 3, 6])
     with col1:
-        run_high_touch_monitoring = st.toggle("Start High Touch Monitoring", value=False, key="high_touch_toggle")
+        run_high_touch = st.toggle("Start High Touch Monitoring", key="ht_toggle")
     with col2:
-        st.success(
-            "Status: High Touch Monitoring Enabled" if run_high_touch_monitoring else "Status: High Touch Monitoring Disabled")
+        st.success("Status: Enabled" if run_high_touch else "Status: Disabled")
     with col3:
-        if st.session_state.high_touch_log:
-            with st.expander(f"Log: {st.session_state.high_touch_log[-1]}", expanded=False):
-                log_container = st.container(height=200, border=False)
-                for message in reversed(st.session_state.high_touch_log):
-                    log_container.text(message)
+        with st.expander(f"Log: {st.session_state.high_touch_log[-1]}", expanded=False):
+            log_container = st.container(height=200)
+            for msg in reversed(st.session_state.high_touch_log): log_container.text(msg)
 
+# --- 2. HALTER ALERT UI (RENAMED) ---
 st.divider()
-
-# --- OCR ALERT UI (NEW SECTION) ---
-st.header("🖼️ OCR Error Alert")
-
-# Check if the sound file loaded correctly
-if isinstance(ocr_alert_sound, str):
-    st.error(f"Failed to load OCR Error sound file: {ocr_alert_sound}")
-    st.warning(f"Please ensure the path is correct. Current Path: {OCR_SOUND_FILE}")
+st.header("🖼️ HALTER Alert")
+if isinstance(halter_sound, str):
+    st.error(f"Failed to load sound file: {halter_sound}")
 else:
     col4, col5, col6 = st.columns([2, 3, 6])
     with col4:
-        run_ocr_monitoring = st.toggle("Start OCR Error Monitoring", value=False, key="ocr_toggle")
+        run_halter = st.toggle("Start HALTER Monitoring", key="halter_toggle")
     with col5:
-        st.success("Status: OCR Monitoring Enabled" if run_ocr_monitoring else "Status: OCR Monitoring Disabled")
+        st.success("Status: Enabled" if run_halter else "Status: Disabled")
     with col6:
-        if st.session_state.ocr_log:
-            with st.expander(f"Log: {st.session_state.ocr_log[-1]}", expanded=False):
-                log_container_ocr = st.container(height=200, border=False)
-                for message in reversed(st.session_state.ocr_log):
-                    log_container_ocr.text(message)
+        with st.expander(f"Log: {st.session_state.halter_log[-1]}", expanded=False):
+            log_container = st.container(height=200)
+            for msg in reversed(st.session_state.halter_log): log_container.text(msg)
+
+# --- 3. GROSS EXPOSURE ALERT UI (NEW) ---
+st.divider()
+st.header("💰 Gross Exposure Alert")
+if not all(gross_exposure_sounds.values()):
+    st.error("One or more Gross Exposure sound files failed to load. Check paths.")
+else:
+    col7, col8, col9 = st.columns([2, 3, 6])
+    with col7:
+        run_gross_exp = st.toggle("Start Gross Exposure Monitoring", key="gross_exp_toggle")
+    with col8:
+        st.success("Status: Enabled" if run_gross_exp else "Status: Disabled")
+    with col9:
+        with st.expander(f"Log: {st.session_state.gross_exp_log[-1]}", expanded=False):
+            log_container = st.container(height=200)
+            for msg in reversed(st.session_state.gross_exp_log): log_container.text(msg)
 
 # --- MONITORING LOGIC ---
+now = time.time()
+timestamp = time.strftime('%H:%M:%S')
 
-# 1. High Touch Monitoring Logic
-if run_high_touch_monitoring and not isinstance(high_touch_sound, str):
-    windows = gw.getAllTitles()
-    found_match = False
-    for title in windows:
-        if any(term in title for term in HIGH_TOUCH_SEARCH_TERMS):
-            log_message = f"[{time.strftime('%H:%M:%S')}] Found: '{title}' -> Sound PLAYED."
+# 1. High Touch Logic
+if run_high_touch and not isinstance(high_touch_sound, str):
+    found = any(term in title for term in HIGH_TOUCH_SEARCH_TERMS for title in gw.getAllTitles())
+    if found:
+        log_msg = f"[{timestamp}] Found Quote Request -> Sound PLAYED."
+        if st.session_state.high_touch_log[-1] != log_msg:
             high_touch_sound.play()
-            if st.session_state.high_touch_log[-1] != log_message:
-                st.session_state.high_touch_log.append(log_message)
-            found_match = True
-            break
-    if not found_match:
-        log_message = f"[{time.strftime('%H:%M:%S')}] Check complete. No match found."
-        if st.session_state.high_touch_log[-1] != log_message:
-            st.session_state.high_touch_log.append(log_message)
-
-# 2. OCR Monitoring Logic
-if run_ocr_monitoring and not isinstance(ocr_alert_sound, str):
-    rect = get_window_rect(OCR_WINDOW_TITLE)
-    if not rect:
-        log_message = f"[{time.strftime('%H:%M:%S')}] Window '{OCR_WINDOW_TITLE}' not found."
-        if st.session_state.ocr_log[-1] != log_message:
-            st.session_state.ocr_log.append(log_message)
+            st.session_state.high_touch_log.append(log_msg)
     else:
-        screenshot = capture_screenshot(rect)
-        text = extract_text_from_image(screenshot)
+        log_msg = f"[{timestamp}] Check complete. No match."
+        if st.session_state.high_touch_log[-1] != log_msg:
+            st.session_state.high_touch_log.append(log_msg)
 
-        if any(term in text for term in OCR_SEARCH_TERMS):
-            log_message = f"[{time.strftime('%H:%M:%S')}] ERROR DETECTED! -> Sound PLAYED."
-            ocr_alert_sound.play()
-            if st.session_state.ocr_log[-1] != log_message:
-                st.session_state.ocr_log.append(log_message)
-                st.session_state.ocr_log.append(f"   -> Text found: '{text[:100]}...'")  # Log a snippet of the text
+# 2. HALTER Logic
+if run_halter and not isinstance(halter_sound, str):
+    rect = find_window_by_title(HALTER_WINDOW_TITLE)
+    if not rect:
+        log_msg = f"[{timestamp}] Window '{HALTER_WINDOW_TITLE}' not found."
+    else:
+        text = extract_text_from_image(capture_screenshot(rect))
+        if any(term in text for term in HALTER_SEARCH_TERMS):
+            log_msg = f"[{timestamp}] HALTER error detected -> Sound PLAYED."
+            if st.session_state.halter_log[-1] != log_msg:
+                halter_sound.play()
+                st.session_state.halter_log.append(log_msg)
         else:
-            log_message = f"[{time.strftime('%H:%M:%S')}] OCR check complete. No errors found."
-            if st.session_state.ocr_log[-1] != log_message:
-                st.session_state.ocr_log.append(log_message)
+            log_msg = f"[{timestamp}] HALTER check complete. No errors."
+    if st.session_state.halter_log[-1] != log_msg:
+        st.session_state.halter_log.append(log_msg)
+
+# 3. Gross Exposure Logic
+if run_gross_exp and all(gross_exposure_sounds.values()):
+    rect = find_window_by_title(GROSS_EXP_WINDOW_TITLE)
+    if not rect:
+        log_msg = f"[{timestamp}] Window '{GROSS_EXP_WINDOW_TITLE}' not found."
+    else:
+        text = extract_text_from_image(capture_screenshot(rect))
+        value = parse_gross_exposure_value(text)
+        if value is not None:
+            log_msg = f"[{timestamp}] Gross Exposure Found: {value: ,}"
+            # Check thresholds from highest to lowest
+            for threshold in sorted(gross_exposure_sounds.keys(), reverse=True):
+                if value > threshold:
+                    if (now - st.session_state.gross_exp_last_alert) > GROSS_EXP_COOLDOWN:
+                        sound_to_play = gross_exposure_sounds[threshold]
+                        sound_to_play.play()
+                        log_msg += f" -> ALERT! Exceeds {threshold:,}. Sound PLAYED."
+                        st.session_state.gross_exp_last_alert = now
+                    else:
+                        log_msg += f" -> Exceeds {threshold:,}. (Cooldown active)."
+                    break  # Only trigger highest applicable alert
+        else:
+            log_msg = f"[{timestamp}] Gross Exposure check complete. Value not found."
+    if st.session_state.gross_exp_log[-1] != log_msg:
+        st.session_state.gross_exp_log.append(log_msg)
 
 # --- MASTER RERUN CONTROLLER ---
-# If any monitoring is active, wait and rerun the app to create a loop.
-if run_high_touch_monitoring or run_ocr_monitoring:
+if run_high_touch or run_halter or run_gross_exp:
     time.sleep(CHECK_INTERVAL)
     st.rerun()
