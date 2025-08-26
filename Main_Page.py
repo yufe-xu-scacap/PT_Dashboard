@@ -2,7 +2,7 @@ import streamlit as st
 import pygame
 import pygetwindow as gw
 import time
-from datetime importdatetime
+from datetime import datetime
 
 # Imports for OCR alerts
 import pyautogui
@@ -55,9 +55,9 @@ HALTER_SEARCH_TERMS = ['halterr', 'unkn', 'malterr', 'malter', 'halter', 'unknow
 # 3. Gross Exposure Alert (NEW)
 GROSS_EXP_WINDOW_TITLE = "Scalable_Hedging_OCR"  # Partial title of the target window
 GROSS_EXP_SOUND_FILES = {
-    6000000: 'Sounds/Alert_6M.wav',  # Sound for > 6 Million
-    8000000: 'Sounds/Alert_8M.wav',  # Sound for > 8 Million
-    10000000: 'Sounds/Alert_10M.wav'  # Sound for > 10 Million
+    6000000: 'Sounds/Alert_6M.mp3',  # Sound for > 6 Million
+    8000000: 'Sounds/Alert_8M.mp3',  # Sound for > 8 Million
+    10000000: 'Sounds/Alert_10M.mp3'  # Sound for > 10 Million
 }
 GROSS_EXP_COOLDOWN = 120  # Seconds between alerts to prevent spam
 
@@ -135,7 +135,7 @@ st.info("Powered by Hedge Fund Technology!")
 
 # --- 1. HIGH TOUCH ALERT UI ---
 st.divider()
-st.header("🔊 High Touch Alert")
+st.header("🔊 Sound Alert")
 if isinstance(high_touch_sound, str):
     st.error(f"Failed to load sound file: {high_touch_sound}")
 else:
@@ -151,7 +151,6 @@ else:
 
 # --- 2. HALTER ALERT UI (RENAMED) ---
 st.divider()
-st.header("🖼️ HALTER Alert")
 if isinstance(halter_sound, str):
     st.error(f"Failed to load sound file: {halter_sound}")
 else:
@@ -167,7 +166,6 @@ else:
 
 # --- 3. GROSS EXPOSURE ALERT UI (NEW) ---
 st.divider()
-st.header("💰 Gross Exposure Alert")
 if not all(gross_exposure_sounds.values()):
     st.error("One or more Gross Exposure sound files failed to load. Check paths.")
 else:
