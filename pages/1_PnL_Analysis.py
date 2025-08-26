@@ -141,14 +141,6 @@ def get_reports(date: str, bearer_token: str, log_list: List[str], log_placehold
     return report_dataframes
 
 
-from typing import Dict, Optional, List, Tuple
-
-# ... other imports
-
-from typing import Dict, Optional, List, Tuple
-
-# ... other imports
-
 def create_table_image(
         df: pd.DataFrame,
         width: int,
@@ -209,10 +201,9 @@ def create_table_image(
     )
     return pio.to_image(fig, format='png', width=width, height=height, scale=1.0)
 
-
 def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, df_date, width: int, height: int):
     """
-    Generates the PnL Breakdown plot with three Y-axes, separated right axes, and data labels.
+    Generates the final PnL Breakdown plot with intelligent, compact, non-overlapping labels.
     """
     # --- DATA PREPARATION ---
     plot_data_list = [
@@ -230,72 +221,170 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
 
     # --- PLOT CREATION ---
     fig = go.Figure()
-    intraday_positions = ['middle right'] + ['bottom center'] * (len(df_plot) - 2) + ['middle left']
+
+    # --- TRACE DEFINITIONS ---
     fig.add_trace(
         go.Scatter(x=df_plot['DateLabel'], y=df_plot['Intraday_PnL'], name='Primary Session PnL (lhs)',
                    line=dict(color='#6BDBCB'),
-                   fillcolor='rgba(107, 219, 203, 0.6)', mode='lines+markers+text', fill='tozeroy',
-                   text=[f'{pnl / 1000:,.1f}k' for pnl in df_plot['Intraday_PnL']],
-                   textposition=intraday_positions,
-                   textfont=dict(size=20, color='#101112', family="Arial, sans-serif"),
+                   fillcolor='rgba(107, 219, 203, 0.6)', mode='lines+markers', fill='tozeroy',
                    hovertemplate='Intraday: %{y:,.0f} EUR<extra></extra>'))
+
     x_fill_coords = list(df_plot['DateLabel'][:-1]) + list(df_plot['DateLabel'][:-1][::-1])
     y_fill_coords = list(df_plot['Total_PnL'][:-1]) + list(df_plot['Intraday_PnL'][:-1][::-1])
     fig.add_trace(
         go.Scatter(x=x_fill_coords, y=y_fill_coords, mode='none', fill='toself', fillcolor='rgba(247, 152, 128, 0.6)',
                    showlegend=False, hoverinfo='none'))
+
     line_data = df_plot['Total_PnL'].copy().astype(object)
     line_data.iloc[-1] = None
-    text_data = line_data.copy()
-    text_data.iloc[-1] = None
     overnight_pnl_for_hover = df_plot['Overnight_PnL'].copy().astype(object)
     overnight_pnl_for_hover.iloc[-1] = None
-    overnight_positions = ['middle right'] + ['bottom center'] * (len(df_plot) - 3) + ['middle left']
     fig.add_trace(
         go.Scatter(x=df_plot['DateLabel'], y=line_data, name='Late Session PnL (lhs)', line=dict(color='#F79880'),
-                   mode='lines+markers+text', text=[f'{pnl / 1000:,.1f}k' for pnl in text_data.dropna()],
-                   textposition=overnight_positions,
-                   textfont=dict(size=20, color='#101112', family="Arial, sans-serif"),
+                   mode='lines+markers',
                    hovertemplate='Overnight: %{customdata:,.0f} EUR<br>Total: %{y:,.0f} EUR<extra></extra>',
                    customdata=overnight_pnl_for_hover))
+
     fig.add_trace(go.Scatter(x=df_plot['DateLabel'], y=df_plot['Win_Rate'], name='% of Profitable Instruments (rhs)',
                              line=dict(color='#FFC880', width=2, dash='dash'),
                              marker=dict(symbol='x-thin', size=20, color='#FFC880'),
                              mode='lines+markers', yaxis='y2',
                              hovertemplate='Win Rate: %{y:.1%}<extra></extra>'))
-    num_points = len(df_plot)
-    bps_positions_top = ['middle right'] + ['top center'] * (num_points - 2) + ['middle left']
-    bps_positions_bottom = ['middle right'] + ['bottom center'] * (num_points - 2) + ['middle left']
+
     fig.add_trace(go.Scatter(
         x=df_plot['DateLabel'], y=df_plot['pnl_turnover_early_bps'], name='Primary Session PnL in bps (rhs)',
         line=dict(color='#371d76', width=2.5, dash='dot'),
-        mode='lines+markers+text', yaxis='y3', marker=dict(symbol='cross', size=10),
-        text=[f'{v:.1f}bp' if pd.notna(v) else '' for v in df_plot['pnl_turnover_early_bps']],
-        textposition=bps_positions_top,
-        textfont=dict(size=20, color='#371d76'),
+        mode='lines+markers', yaxis='y3',
+        marker=dict(symbol='cross', size=10),
         hovertemplate='Intraday PnL/Turnover: %{y:.2f} bps<extra></extra>'
     ))
+
     fig.add_trace(go.Scatter(
         x=df_plot['DateLabel'], y=df_plot['pnl_turnover_late_bps'], name='Late Session PnL in bps (rhs)',
         line=dict(color='#ABB6FF', width=2.5, dash='dot'),
-        mode='lines+markers+text', yaxis='y3', marker=dict(symbol='cross', size=10),
-        text=[f'{v:.1f}bp' if pd.notna(v) else '' for v in df_plot['pnl_turnover_late_bps']],
-        textposition=bps_positions_bottom,
-        textfont=dict(size=20, color='#371d76'),
+        mode='lines+markers', yaxis='y3',
+        marker=dict(symbol='cross', size=10),
         hovertemplate='Late Session PnL/Turnover: %{y:.2f} bps<extra></extra>'
     ))
-    all_pnl_values = pd.concat([df_plot['Total_PnL'].dropna(), df_plot['Intraday_PnL'].dropna()])
-    y_axis_min = min(0, all_pnl_values.min() * 1.2) if all_pnl_values.min() < 0 else 0
-    y_axis_max = all_pnl_values.max() * 1.2 if all_pnl_values.max() > 0 else 1000
+
+    # --- AXIS RANGE CALCULATION ---
+    all_eur_values = pd.concat([df_plot['Total_PnL'].dropna(), df_plot['Intraday_PnL'].dropna()])
     all_bps_values = pd.concat([df_plot['pnl_turnover_early_bps'], df_plot['pnl_turnover_late_bps']]).dropna()
-    if not all_bps_values.empty:
-        min_bps, max_bps = all_bps_values.min(), all_bps_values.max()
-        bps_axis_min = min(0, min_bps * 1.2) if min_bps < 0 else 0
-        bps_axis_max = max(0, max_bps * 1.2) if max_bps > 0 else 0
-        if bps_axis_min == 0 and bps_axis_max == 0: bps_axis_min, bps_axis_max = -1, 1
+    has_negative_values = (all_eur_values.min() < 0 if not all_eur_values.empty else False) or \
+                          (all_bps_values.min() < 0 if not all_bps_values.empty else False)
+
+    if not has_negative_values:
+        y_axis_min, bps_axis_min = 0, 0
+        y_axis_max = all_eur_values.max() * 1.25 if not all_eur_values.empty and all_eur_values.max() > 0 else 1000
+        bps_axis_max = all_bps_values.max() * 1.25 if not all_bps_values.empty and all_bps_values.max() > 0 else 5
     else:
-        bps_axis_min, bps_axis_max = -5, 5
+        def get_stable_range(series):
+            if series.empty: return 0, 1
+            data_min, data_max = series.min(), series.max()
+            data_range = data_max - data_min if data_max > data_min else abs(data_max) or 1
+            padding = data_range * 0.25  # Increased padding to make room for labels
+            final_min = min(0, data_min - padding)
+            final_max = max(0, data_max + padding)
+            return final_min, final_max
+
+        y_axis_min, y_axis_max = get_stable_range(all_eur_values)
+        bps_axis_min, bps_axis_max = get_stable_range(all_bps_values)
+
+        y_total_range = y_axis_max - y_axis_min
+        y_neg_proportion = abs(y_axis_min) / y_total_range if y_total_range > 0 and y_axis_min < 0 else 0
+        bps_total_range = bps_axis_max - bps_axis_min
+        bps_neg_proportion = abs(bps_axis_min) / bps_total_range if bps_total_range > 0 and bps_axis_min < 0 else 0
+        master_neg_proportion = max(y_neg_proportion, bps_neg_proportion)
+
+        if master_neg_proportion > 0:
+            if y_neg_proportion < master_neg_proportion:
+                y_axis_min = (master_neg_proportion * y_axis_max) / (master_neg_proportion - 1)
+            if bps_neg_proportion < master_neg_proportion:
+                bps_axis_min = (master_neg_proportion * bps_axis_max) / (master_neg_proportion - 1)
+
     bps_range = [bps_axis_min, bps_axis_max]
+
+    # --- FINAL ANNOTATION LOGIC ---
+    y_range_for_norm = y_axis_max - y_axis_min
+    bps_range_for_norm = bps_axis_max - bps_axis_min
+    for i, date in enumerate(df_plot['DateLabel']):
+        labels_to_plot = []
+
+        # Gather labels for the current date
+        pnl_val = df_plot['Intraday_PnL'].iloc[i]
+        labels_to_plot.append(
+            {'text': f'{pnl_val / 1000:,.1f}k', 'value': pnl_val, 'yref': 'y1', 'font': {'color': '#101112'}})
+        if i < len(df_plot) - 1:
+            total_pnl_val = df_plot['Total_PnL'].iloc[i]
+            labels_to_plot.append({'text': f'{total_pnl_val / 1000:,.1f}k', 'value': total_pnl_val, 'yref': 'y1',
+                                   'font': {'color': '#101112'}})
+        early_bps_val = df_plot['pnl_turnover_early_bps'].iloc[i]
+        if pd.notna(early_bps_val):
+            labels_to_plot.append(
+                {'text': f'{early_bps_val:.1f}bp', 'value': early_bps_val, 'yref': 'y3', 'font': {'color': '#371d76'}})
+        late_bps_val = df_plot['pnl_turnover_late_bps'].iloc[i]
+        if pd.notna(late_bps_val):
+            labels_to_plot.append(
+                {'text': f'{late_bps_val:.1f}bp', 'value': late_bps_val, 'yref': 'y3', 'font': {'color': '#371d76'}})
+
+        if not labels_to_plot: continue
+
+        # Add normalized y-values and sort labels from highest to lowest
+        for label in labels_to_plot:
+            if label['yref'] == 'y1':
+                norm_y = (label['value'] - y_axis_min) / y_range_for_norm if y_range_for_norm else 0
+            else:
+                norm_y = (label['value'] - bps_axis_min) / bps_range_for_norm if bps_range_for_norm else 0
+            label['normalized_y'] = norm_y
+        labels_to_plot.sort(key=lambda x: x['normalized_y'], reverse=True)
+
+        # --- Intelligent Separation Algorithm ---
+        final_shifts = [0] * len(labels_to_plot)
+        MIN_SEPARATION = 0.04  # Minimum separation in normalized units (4% of the axis)
+
+        # 1. Initial placement: try to keep labels close and alternate
+        for j, label in enumerate(labels_to_plot):
+            direction = 'up' if j % 2 == 0 else 'down'
+            if label['normalized_y'] < 0.2: direction = 'up'
+            if label['normalized_y'] > 0.8: direction = 'down'
+            final_shifts[j] = 20 if direction == 'up' else -20
+
+        # 2. Nudge labels apart to resolve overlaps
+        for _ in range(5):  # Run a few passes to let labels settle
+            for j in range(len(labels_to_plot) - 1):
+                label_a = labels_to_plot[j]
+                label_b = labels_to_plot[j + 1]
+
+                # Approximate final positions in normalized units
+                pos_a = label_a['normalized_y'] + (final_shifts[j] / (height * 0.8))
+                pos_b = label_b['normalized_y'] + (final_shifts[j + 1] / (height * 0.8))
+
+                separation = abs(pos_a - pos_b)
+
+                if separation < MIN_SEPARATION:
+                    # If they are too close, push them apart
+                    push_amount = (MIN_SEPARATION - separation) * (height * 0.8) / 2
+                    final_shifts[j] += push_amount
+                    final_shifts[j + 1] -= push_amount
+
+        # Horizontal alignment for endpoints
+        if i == 0:
+            x_anchor, x_shift = 'left', 10
+        elif i == len(df_plot) - 1:
+            x_anchor, x_shift = 'right', -10
+        else:
+            x_anchor, x_shift = 'center', 0
+
+        # Add an annotation for each label with its final calculated shift
+        for j, label in enumerate(labels_to_plot):
+            fig.add_annotation(
+                x=date, y=label['value'], yref=label['yref'], text=label['text'],
+                showarrow=False, font={**label['font'], 'size': 18, 'family': 'Arial, sans-serif'},
+                xanchor=x_anchor, xshift=x_shift,
+                yshift=final_shifts[j]
+            )
+
+    # --- LAYOUT UPDATING ---
     fig.update_layout(
         title=dict(text='<b>Daily PnL Breakdown (T-4 to T-0)</b>', y=0.95, x=0.5, xanchor='center', yanchor='top',
                    font=dict(size=28, color='#101112')),
@@ -308,18 +397,19 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
                    showline=True, linewidth=1, linecolor='#101112', mirror=True, range=[0, len(df_plot) - 1]),
         yaxis=dict(title=dict(text='Profit and Loss (EUR)', standoff=15), tickformat='~s',
                    range=[y_axis_min, y_axis_max], title_font=dict(size=22), tickfont=dict(size=20), showgrid=False,
+                   zeroline=True, zerolinewidth=1, zerolinecolor='grey',
                    showline=True, linewidth=1, linecolor='#101112', mirror=True),
         yaxis2=dict(title='Win Rate', overlaying='y', side='right', range=[0, 1], tickformat='.0%', showgrid=False,
                     showline=False, anchor='x', title_font=dict(color='#FFC880', size=22),
                     tickfont=dict(color='#FFC880', size=20)),
         yaxis3=dict(title=dict(text='PnL in bps', standoff=15), range=bps_range, overlaying='y', side='right',
-                    showgrid=False, showline=True, linewidth=2, linecolor='#371d76', anchor='free', position=1.0,
+                    showgrid=False, zeroline=True, zerolinewidth=1, zerolinecolor='grey',
+                    showline=True, linewidth=2, linecolor='#371d76', anchor='free', position=1.0,
                     title_font=dict(color='#371d76', size=22), tickfont=dict(color='#371d76', size=20), ticks="outside",
                     minor=dict(ticks="outside", ticklen=5, tickcolor="black", showgrid=False, griddash='dot',
                                gridcolor='LightGrey'))
     )
     return pio.to_image(fig, format='png', width=width, height=height, scale=1)
-
 
 def create_turnover_plot(total_turnover_data, accepted_turnover_data, df_date, width: int, height: int):
     """
@@ -630,7 +720,7 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
             term, df in historical_pnl.items()}
         daily_intraday_pnl = {'T-0': Daily_PnL_MM, 'T-1': Daily_PnL_t1, 'T-2': Daily_PnL_t2, 'T-3': Daily_PnL_t3,
                               'T-4': Daily_PnL_t4}
-        overnight_pnl_data = {f'T-{i}': (ytd_pnl[f'T-{i}'] - ytd_pnl[f'T-{i + 1}']) - daily_intraday_pnl[f'T-{i}'] for i
+        overnight_pnl_data = {f'T-{i}': (ytd_pnl[f'T-{i - 1}'] - ytd_pnl[f'T-{i}']) - daily_intraday_pnl[f'T-{i - 1}'] for i
                               in range(1, 5)}
 
         historical_trades_early = {f'T-{i}': report_data.get(f'Trades_T-{i}') for i in range(1, 5)}
