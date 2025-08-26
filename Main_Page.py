@@ -221,10 +221,8 @@ else:
 
 # --- 4. BACKGROUND CLICK SIMULATOR UI ---
 st.divider()
-st.header("🖱️ Background Click Simulator")
-
 # --- LAYOUT CHANGE IS HERE: 4 columns for Toggle, Status, Input, and Log ---
-toggle_col, status_col, interval_col, log_col = st.columns([2, 2, 2, 6])
+toggle_col, interval_col, status_col, log_col = st.columns([2, 1, 2, 6])
 
 with toggle_col:
     st.session_state.is_running = st.toggle(
