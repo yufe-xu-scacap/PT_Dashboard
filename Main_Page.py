@@ -1,197 +1,365 @@
-# app.py
-# A Streamlit application to automate a sequence of mouse clicks in a specific window.
-#
-# Features:
-# - Remembers click positions after the first setup.
-# - Automatically targets a predefined window.
-# - Provides a web UI with a start/stop toggle, configurable interval, and a progress bar.
-
 import streamlit as st
+import pygame
+import pygetwindow as gw
+import time
+from datetime import datetime
+import re
+
+# Imports for OCR alerts
+import pyautogui
+import pytesseract
+from PIL import Image
+
+# Imports for Click Automation
 import win32gui
 import win32api
-import time
 from pynput import mouse
 
-# --- CONFIGURATION ---
-TARGET_WINDOW_TITLE = "Scalable_Hedging_Version_3.0 - Trading Manager <shared> - \\Remote"
-DELAY_BETWEEN_CLICKS = 0.5  # A short delay between individual clicks within the sequence.
 
-# --- SCRIPT LOGIC (Adapted for Streamlit) ---
+# --- PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="Main Dashboard",
+    page_icon="📈💰📊",
+    layout="wide"
+)
 
-# Create a mouse controller object to perform clicks
+# --- IMPORTANT: TESSERACT CONFIGURATION ---
+try:
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+except Exception as e:
+    st.error(f"Tesseract not configured: {e}. OCR-based alerts will not work.")
+    st.info("Please install Tesseract-OCR and ensure the path above is correct.")
+
+# --- CSS STYLING ---
+st.markdown(
+    """
+    <style>
+    /* Style for the sidebar navigation links */
+    [data-testid="stSidebarNav"] a {
+        font-size: 18px !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# --- SCRIPT CONSTANTS ---
+# General
+CHECK_INTERVAL = 5  # Seconds for alert monitoring
+
+# 1. High Touch Alert
+HIGH_TOUCH_SOUND_FILE = 'Sounds/notify.wav'
+HIGH_TOUCH_SEARCH_TERMS = ["Quote Request"]
+
+# 2. HALTER Alert
+HALTER_SOUND_FILE = 'Sounds/error.wav'
+HALTER_WINDOW_TITLE = "Scalable_Quoting_Version_1.0"
+HALTER_SEARCH_TERMS = ['halterr', 'unkn', 'malterr', 'malter', 'halter', 'unknown']
+
+# 3. Gross Exposure Alert
+GROSS_EXP_WINDOW_TITLE = "Scalable_Hedging_OCR"
+GROSS_EXP_SOUND_FILES = {
+    6000000: 'Sounds/Alert_6M.mp3',
+    8000000: 'Sounds/Alert_8M.mp3',
+    10000000: 'Sounds/Alert_10M.mp3'
+}
+GROSS_EXP_COOLDOWN = 120  # Seconds
+
+# 4. Click Automation
+CLICKER_TARGET_WINDOW_TITLE = "Scalable_Hedging_Version_3.0 - Trading Manager <shared> - \\Remote"
+DELAY_BETWEEN_CLICKS = 0.5
+
+
+# --- HELPER FUNCTIONS ---
+
+@st.cache_resource
+def initialize_sounds(file_paths):
+    """Initializes pygame and loads one or more sound files."""
+    if not pygame.mixer.get_init():
+        pygame.mixer.init()
+    sounds = {}
+    if isinstance(file_paths, dict):
+        for key, path in file_paths.items():
+            try:
+                sounds[key] = pygame.mixer.Sound(path)
+            except Exception as e:
+                st.error(f"Failed to load sound for threshold {key} at '{path}': {e}")
+                sounds[key] = None
+        return sounds
+    else:
+        try:
+            return pygame.mixer.Sound(file_paths)
+        except Exception as e:
+            return str(e)
+
+# --- Alert Helper Functions ---
+def find_window_by_title_substring(title_part):
+    """Finds a window where the title contains the given substring."""
+    try:
+        window = gw.getWindowsWithTitle(title_part)[0]
+        return (window.left, window.top, window.width, window.height) if window else None
+    except IndexError:
+        return None
+
+def capture_screenshot(rect):
+    return pyautogui.screenshot(region=rect)
+
+def extract_text_from_image(image):
+    config = '--oem 3 --psm 6'
+    return pytesseract.image_to_string(image, config=config).lower()
+
+def parse_gross_exposure_value(text):
+    match = re.search(r"eur\s([\d\s]+)ads", text)
+    if match:
+        value_string = match.group(1).replace(" ", "")
+        return int(value_string)
+    return None
+
+# --- Click Automation Helper Functions ---
 mouse_controller = mouse.Controller()
 
-
-def find_target_window(title):
+def find_exact_window(title):
     """Finds the window handle for a given exact window title."""
     try:
         hwnd = win32gui.FindWindow(None, title)
-        if hwnd == 0:
-            return None
-        return hwnd
+        return hwnd if hwnd != 0 else None
     except Exception:
         return None
 
-
 def perform_realistic_click(hwnd, x, y, click_type='left'):
-    """
-    Simulates a realistic click by moving the mouse cursor, clicking, and returning.
-    Logs actions to the Streamlit session state.
-    """
+    """Simulates a realistic click and logs actions to the Streamlit session state."""
     log_entry = ""
     try:
         original_pos = mouse_controller.position
         screen_coords = win32gui.ClientToScreen(hwnd, (x, y))
         mouse_controller.position = screen_coords
         time.sleep(0.05)
-
         button = mouse.Button.right if click_type.lower() == 'right' else mouse.Button.left
         mouse_controller.click(button, 1)
         mouse_controller.position = original_pos
-
         log_entry = f"Success: Performed {click_type} click at {screen_coords}."
-        st.session_state.log.append(log_entry)
-
+        st.session_state.click_log.append(log_entry)
     except Exception as e:
         log_entry = f"Error: Failed to click at ({x}, {y}). Details: {e}"
-        st.session_state.log.append(log_entry)
+        st.session_state.click_log.append(log_entry)
         if 'original_pos' in locals():
             mouse_controller.position = original_pos
 
 
-# --- STREAMLIT UI AND APPLICATION FLOW ---
-
-st.set_page_config(page_title="Click Automation", layout="centered")
-st.title("🖱️ Background Click Simulator")
+# --- INITIALIZE SOUND OBJECTS ---
+high_touch_sound = initialize_sounds(HIGH_TOUCH_SOUND_FILE)
+halter_sound = initialize_sounds(HALTER_SOUND_FILE)
+gross_exposure_sounds = initialize_sounds(GROSS_EXP_SOUND_FILES)
 
 # --- INITIALIZE SESSION STATE ---
-# This is crucial for Streamlit to remember variables across reruns.
-if 'click_points' not in st.session_state:
-    st.session_state.click_points = []
-if 'is_running' not in st.session_state:
-    st.session_state.is_running = False
-if 'capture_mode' not in st.session_state:
-    st.session_state.capture_mode = False
-if 'log' not in st.session_state:
-    st.session_state.log = ["Welcome! Start the automation to begin."]
+# For Alerts
+if 'high_touch_log' not in st.session_state: st.session_state.high_touch_log = ["Ready."]
+if 'halter_log' not in st.session_state: st.session_state.halter_log = ["Ready."]
+if 'gross_exp_log' not in st.session_state: st.session_state.gross_exp_log = ["Ready."]
+if 'gross_exp_last_alert' not in st.session_state: st.session_state.gross_exp_last_alert = 0
+# For Click Automation
+if 'click_points' not in st.session_state: st.session_state.click_points = []
+if 'is_running' not in st.session_state: st.session_state.is_running = False
+if 'capture_mode' not in st.session_state: st.session_state.capture_mode = False
+if 'click_log' not in st.session_state: st.session_state.click_log = ["Welcome! Start the automation to begin."]
 
-# --- UI CONTROLS ---
-st.info(f"This tool will automate clicks in the window named:\n**{TARGET_WINDOW_TITLE}**")
 
-col1, col2 = st.columns([1, 1])
-with col1:
-    # This toggle's value is directly tied to the session state
-    st.session_state.is_running = st.toggle(
-        "Start / Stop Automation",
-        value=st.session_state.is_running,
-        key='run_toggle'
-    )
-with col2:
-    click_interval = st.number_input(
-        "Interval between sequences (seconds)",
-        min_value=1,
-        value=20,
-        step=1
-    )
+# --- MAIN PAGE LAYOUT ---
+st.title("PT Dashboard")
+st.sidebar.success("Select a page above.")
+st.info("Powered by Hedge Fund Technology!")
 
-# Placeholders for dynamic content like status and progress bar
+# --- 1. HIGH TOUCH ALERT UI ---
+st.divider()
+st.header("🔊 Sound Alert")
+if isinstance(high_touch_sound, str):
+    st.error(f"Failed to load sound file: {high_touch_sound}")
+else:
+    col1, col2, col3 = st.columns([2, 3, 6])
+    with col1:
+        run_high_touch = st.toggle("Start High Touch Monitoring", key="ht_toggle")
+    with col2:
+        if run_high_touch: st.success("Status: Enabled")
+        else: st.error("Status: Disabled")
+    with col3:
+        with st.expander(f"Log: {st.session_state.high_touch_log[-1]}", expanded=False):
+            log_container = st.container(height=200)
+            for msg in reversed(st.session_state.high_touch_log): log_container.text(msg)
+
+# --- 2. HALTER ALERT UI ---
+st.divider()
+if isinstance(halter_sound, str):
+    st.error(f"Failed to load sound file: {halter_sound}")
+else:
+    col4, col5, col6 = st.columns([2, 3, 6])
+    with col4:
+        run_halter = st.toggle("Start HALTER Monitoring", key="halter_toggle")
+    with col5:
+        if run_halter: st.success("Status: Enabled")
+        else: st.error("Status: Disabled")
+    with col6:
+        with st.expander(f"Log: {st.session_state.halter_log[-1]}", expanded=False):
+            log_container = st.container(height=200)
+            for msg in reversed(st.session_state.halter_log): log_container.text(msg)
+
+# --- 3. GROSS EXPOSURE ALERT UI ---
+st.divider()
+if not all(gross_exposure_sounds.values()):
+    st.error("One or more Gross Exposure sound files failed to load. Check paths.")
+else:
+    col7, col8, col9 = st.columns([2, 3, 6])
+    with col7:
+        run_gross_exp = st.toggle("Start Gross Exposure Monitoring", key="gross_exp_toggle")
+    with col8:
+        if run_gross_exp: st.success("Status: Enabled")
+        else: st.error("Status: Disabled")
+    with col9:
+        with st.expander(f"Log: {st.session_state.gross_exp_log[-1]}", expanded=False):
+            log_container = st.container(height=200)
+            for msg in reversed(st.session_state.gross_exp_log): log_container.text(msg)
+
+# --- 4. BACKGROUND CLICK SIMULATOR UI ---
+st.divider()
+st.header("🖱️ Background Click Simulator")
+st.info(f"This tool will automate clicks in the window named:\n**{CLICKER_TARGET_WINDOW_TITLE}**")
+
+col10, col11 = st.columns([1, 1])
+with col10:
+    st.session_state.is_running = st.toggle("Start / Stop Click Automation", value=st.session_state.is_running, key='click_run_toggle')
+with col11:
+    click_interval = st.number_input("Interval between sequences (seconds)", min_value=1, value=20, step=1)
+
 status_placeholder = st.empty()
 progress_placeholder = st.empty()
 
-# --- LOGIC FOR CAPTURING CLICKS (First time only) ---
+
+# --- MONITORING & AUTOMATION LOGIC ---
+now = time.time()
+timestamp = time.strftime('%H:%M:%S')
+
+# 1. High Touch Logic
+if run_high_touch and not isinstance(high_touch_sound, str):
+    # ... (rest of the high touch logic is the same)
+    found = any(term in title for term in HIGH_TOUCH_SEARCH_TERMS for title in gw.getAllTitles())
+    log_msg = f"[{timestamp}] " + ("Found Quote Request -> Sound PLAYED." if found else "Check complete. No match.")
+    if st.session_state.high_touch_log[-1] != log_msg:
+        if found: high_touch_sound.play()
+        st.session_state.high_touch_log.append(log_msg)
+
+# 2. HALTER Logic
+if run_halter and not isinstance(halter_sound, str):
+    rect = find_window_by_title_substring(HALTER_WINDOW_TITLE)
+    if not rect:
+        log_msg = f"[{timestamp}] Window '{HALTER_WINDOW_TITLE}' not found."
+    else:
+        text = extract_text_from_image(capture_screenshot(rect))
+        if any(term in text for term in HALTER_SEARCH_TERMS):
+            log_msg = f"[{timestamp}] HALTER error detected -> Sound PLAYED."
+            if st.session_state.halter_log[-1] != log_msg:
+                halter_sound.play()
+                st.session_state.halter_log.append(log_msg)
+        else:
+            log_msg = f"[{timestamp}] HALTER check complete. No errors."
+    if st.session_state.halter_log[-1] != log_msg:
+        st.session_state.halter_log.append(log_msg)
+
+
+# 3. Gross Exposure Logic
+if run_gross_exp and all(gross_exposure_sounds.values()):
+    rect = find_window_by_title_substring(GROSS_EXP_WINDOW_TITLE)
+    if not rect:
+        log_msg = f"[{timestamp}] Window '{GROSS_EXP_WINDOW_TITLE}' not found."
+    else:
+        # ... (rest of gross exposure logic is the same)
+        text = extract_text_from_image(capture_screenshot(rect))
+        value = parse_gross_exposure_value(text)
+        if value is not None:
+            log_msg = f"[{timestamp}] Gross Exposure Found: {value: ,}"
+            for threshold in sorted(gross_exposure_sounds.keys(), reverse=True):
+                if value > threshold:
+                    if (now - st.session_state.gross_exp_last_alert) > GROSS_EXP_COOLDOWN:
+                        sound_to_play = gross_exposure_sounds[threshold]
+                        sound_to_play.play()
+                        log_msg += f" -> ALERT! Exceeds {threshold:,}. Sound PLAYED."
+                        st.session_state.gross_exp_last_alert = now
+                    else:
+                        log_msg += f" -> Exceeds {threshold:,}. (Cooldown active)."
+                    break
+        else:
+            log_msg = f"[{timestamp}] Gross Exposure check complete. Value not found."
+    if st.session_state.gross_exp_log[-1] != log_msg:
+        st.session_state.gross_exp_log.append(log_msg)
+
+
+# 4. Click Automation Logic
 if st.session_state.is_running and not st.session_state.click_points:
     st.session_state.capture_mode = True
 
 if st.session_state.capture_mode:
-    hwnd = find_target_window(TARGET_WINDOW_TITLE)
+    hwnd = find_exact_window(CLICKER_TARGET_WINDOW_TITLE)
     if not hwnd:
-        st.error(f"The target window '{TARGET_WINDOW_TITLE}' could not be found. Please ensure it is open.")
-        st.session_state.is_running = False  # Turn off toggle
+        st.error(f"Target window '{CLICKER_TARGET_WINDOW_TITLE}' not found for click setup.")
+        st.session_state.is_running = False
         st.rerun()
     else:
-        status_placeholder.warning("ACTION REQUIRED: Please define the click sequence.")
-        st.write("1. **Right-click** at the first desired location inside the target window.")
-        st.write("2. **Left-click** at the second location.")
-        st.write("3. **Left-click** at the third location.")
-        st.write("_The script will automatically detect the clicks and continue..._")
+        status_placeholder.warning("ACTION REQUIRED: Define the click sequence in the target window.")
+        st.write("1. **Right-click** at the first location. 2. **Left-click** at the second. 3. **Left-click** at the third.")
 
-        # This listener will capture the 3 clicks and then stop.
         captured_points = []
         click_definitions = [("Right Click", "right"), ("Left Click", "left"), ("Left Click", "left")]
-
-
         def on_click(x, y, button, pressed):
             if pressed:
                 point_index = len(captured_points)
-                click_type = mouse.Button.right if button == mouse.Button.right else mouse.Button.left
-
-                # Use the correct click type from definitions for saving
-                defined_label, defined_type = click_definitions[point_index]
-
-                screen_coords = (x, y)
-                client_coords = win32gui.ScreenToClient(hwnd, screen_coords)
+                _, defined_type = click_definitions[point_index]
+                client_coords = win32gui.ScreenToClient(hwnd, (x, y))
                 captured_points.append({'coords': client_coords, 'type': defined_type})
-
-                # Stop listener after 3 points
-                if len(captured_points) == 3:
-                    return False
-
-
+                if len(captured_points) == 3: return False
         with mouse.Listener(on_click=on_click) as listener:
-            listener.join()  # This will block here until 3 clicks are captured
+            listener.join()
 
         st.session_state.click_points = captured_points
         st.session_state.capture_mode = False
-        st.success("✅ All 3 click points have been saved successfully!")
-        st.session_state.log.append("Click points defined and saved.")
+        st.success("✅ Click points saved successfully!")
+        st.session_state.click_log.append("Click points defined and saved.")
         time.sleep(2)
         st.rerun()
 
-# --- MAIN AUTOMATION LOOP ---
 if st.session_state.is_running and st.session_state.click_points:
-    hwnd = find_target_window(TARGET_WINDOW_TITLE)
+    hwnd = find_exact_window(CLICKER_TARGET_WINDOW_TITLE)
     if not hwnd:
-        status_placeholder.error(f"Window '{TARGET_WINDOW_TITLE}' not found. Stopping.")
-        st.session_state.is_running = False  # Turn off the toggle
+        status_placeholder.error(f"Window '{CLICKER_TARGET_WINDOW_TITLE}' not found. Stopping.")
+        st.session_state.is_running = False
         time.sleep(2)
         st.rerun()
     else:
-        # Perform the click sequence
         status_placeholder.info("Running click sequence...")
-
-        # Save the window that is currently in focus right before the click
         original_foreground_hwnd = win32gui.GetForegroundWindow()
-
         for point in st.session_state.click_points:
-            coords = point['coords']
-            click_type = point['type']
-            perform_realistic_click(hwnd, coords[0], coords[1], click_type)
+            perform_realistic_click(hwnd, point['coords'][0], point['coords'][1], point['type'])
             time.sleep(DELAY_BETWEEN_CLICKS)
-
-        # Restore focus to the original window immediately after the sequence
         if win32gui.IsWindow(original_foreground_hwnd):
-            try:
-                win32gui.SetForegroundWindow(original_foreground_hwnd)
-            except Exception:
-                pass  # May fail if the original window was closed
+            try: win32gui.SetForegroundWindow(original_foreground_hwnd)
+            except Exception: pass
+        st.session_state.click_log.append("Sequence complete. Waiting...")
 
-        st.session_state.log.append("Sequence complete. Waiting for next interval.")
-
-        # Display the progress bar countdown
         status_placeholder.text(f"Next sequence in {click_interval} seconds...")
         progress_bar = progress_placeholder.progress(0)
         for i in range(100):
             time.sleep(click_interval / 100)
             progress_bar.progress(i + 1)
-
         progress_placeholder.empty()
         st.rerun()
+elif not st.session_state.is_running and 'click_run_toggle' in st.session_state:
+     status_placeholder.success("Status: Stopped. Ready to start.")
 
-elif not st.session_state.is_running:
-    status_placeholder.success("Status: Stopped. Ready to start.")
-
-# --- DISPLAY LOG ---
-with st.expander("Show Activity Log", expanded=True):
+with st.expander("Show Clicker Activity Log", expanded=True):
     log_container = st.container(height=200)
-    for msg in reversed(st.session_state.log):
+    for msg in reversed(st.session_state.click_log):
         log_container.text(msg)
+
+
+# --- MASTER RERUN CONTROLLER ---
+if run_high_touch or run_halter or run_gross_exp:
+    time.sleep(CHECK_INTERVAL)
+    st.rerun()
