@@ -93,6 +93,12 @@ def initialize_sounds(file_paths):
         except Exception as e:
             return str(e)
 
+def update_log(log_key, message):
+    """Appends a message to a session state log if it's new to prevent clutter."""
+    if log_key in st.session_state and st.session_state[log_key][-1] != message:
+        st.session_state[log_key].append(message)
+
+
 # --- Alert Helper Functions ---
 def find_window_by_title_substring(title_part):
     """Finds a window where the title contains the given substring."""
@@ -221,7 +227,6 @@ else:
 
 # --- 4. BACKGROUND CLICK SIMULATOR UI ---
 st.divider()
-# --- LAYOUT CHANGE IS HERE: 4 columns for Toggle, Status, Input, and Log ---
 toggle_col, interval_col, status_col, log_col = st.columns([2, 1, 2, 6])
 
 with toggle_col:
@@ -251,9 +256,7 @@ with log_col:
         log_container = st.container(height=200)
         for msg in reversed(st.session_state.click_log):
             log_container.text(msg)
-# --- END OF LAYOUT CHANGE ---
 
-# Placeholders for status text and progress bar, which will appear below the controls
 status_placeholder = st.empty()
 progress_placeholder = st.empty()
 
@@ -262,15 +265,19 @@ progress_placeholder = st.empty()
 now = time.time()
 timestamp = time.strftime('%H:%M:%S')
 
-# 1. High Touch Logic
+# 1. High Touch Logic (MODIFIED)
 if run_high_touch and not isinstance(high_touch_sound, str):
     found = any(term in title for term in HIGH_TOUCH_SEARCH_TERMS for title in gw.getAllTitles())
-    log_msg = f"[{timestamp}] " + ("Found Quote Request -> Sound PLAYED." if found else "Check complete. No match.")
-    if st.session_state.high_touch_log[-1] != log_msg:
-        if found: high_touch_sound.play()
-        st.session_state.high_touch_log.append(log_msg)
+    if found:
+        # Action: Play the sound every time the condition is met.
+        high_touch_sound.play()
+        log_msg = f"[{timestamp}] Found Quote Request -> Sound PLAYED."
+    else:
+        log_msg = f"[{timestamp}] Check complete. No match."
+    # Logging: Update the on-screen log if the message is different to avoid clutter.
+    update_log('high_touch_log', log_msg)
 
-# 2. HALTER Logic
+# 2. HALTER Logic (MODIFIED)
 if run_halter and not isinstance(halter_sound, str):
     rect = find_window_by_title_substring(HALTER_WINDOW_TITLE)
     if not rect:
@@ -279,16 +286,14 @@ if run_halter and not isinstance(halter_sound, str):
         text = extract_text_from_image(capture_screenshot(rect))
         if any(term in text for term in HALTER_SEARCH_TERMS):
             log_msg = f"[{timestamp}] HALTER error detected -> Sound PLAYED."
+            # Only play the sound if the error is new
             if st.session_state.halter_log[-1] != log_msg:
                 halter_sound.play()
-                st.session_state.halter_log.append(log_msg)
         else:
             log_msg = f"[{timestamp}] HALTER check complete. No errors."
-    if st.session_state.halter_log[-1] != log_msg:
-        st.session_state.halter_log.append(log_msg)
+    update_log('halter_log', log_msg)
 
-
-# 3. Gross Exposure Logic
+# 3. Gross Exposure Logic (MODIFIED)
 if run_gross_exp and all(gross_exposure_sounds.values()):
     rect = find_window_by_title_substring(GROSS_EXP_WINDOW_TITLE)
     if not rect:
@@ -298,6 +303,7 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
         value = parse_gross_exposure_value(text)
         if value is not None:
             log_msg = f"[{timestamp}] Gross Exposure Found: {value: ,}"
+            alert_triggered = False
             for threshold in sorted(gross_exposure_sounds.keys(), reverse=True):
                 if value > threshold:
                     if (now - st.session_state.gross_exp_last_alert) > GROSS_EXP_COOLDOWN:
@@ -307,11 +313,13 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
                         st.session_state.gross_exp_last_alert = now
                     else:
                         log_msg += f" -> Exceeds {threshold:,}. (Cooldown active)."
-                    break
+                    alert_triggered = True
+                    break # Exit after finding the highest exceeded threshold
+            if not alert_triggered:
+                 log_msg += " (Below minimum threshold)."
         else:
             log_msg = f"[{timestamp}] Gross Exposure check complete. Value not found."
-    if st.session_state.gross_exp_log[-1] != log_msg:
-        st.session_state.gross_exp_log.append(log_msg)
+    update_log('gross_exp_log', log_msg)
 
 
 # 4. Click Automation Logic
@@ -333,10 +341,11 @@ if st.session_state.capture_mode:
         def on_click(x, y, button, pressed):
             if pressed:
                 point_index = len(captured_points)
-                _, defined_type = click_definitions[point_index]
-                client_coords = win32gui.ScreenToClient(hwnd, (x, y))
-                captured_points.append({'coords': client_coords, 'type': defined_type})
-                if len(captured_points) == 3: return False
+                if point_index < len(click_definitions):
+                    _, defined_type = click_definitions[point_index]
+                    client_coords = win32gui.ScreenToClient(hwnd, (x, y))
+                    captured_points.append({'coords': client_coords, 'type': defined_type})
+                    if len(captured_points) == 3: return False
         with mouse.Listener(on_click=on_click) as listener:
             listener.join()
 
@@ -365,16 +374,15 @@ if st.session_state.is_running and st.session_state.click_points:
             except Exception: pass
         st.session_state.click_log.append("Sequence complete. Waiting...")
 
-        # This section creates the countdown progress bar
         status_placeholder.text(f"Next sequence in {click_interval} seconds...")
         progress_bar = progress_placeholder.progress(0)
         for i in range(100):
-            time.sleep(click_interval / 100) # Wait for a fraction of the total interval
-            progress_bar.progress(i + 1)     # Update the progress bar
+            time.sleep(click_interval / 100)
+            progress_bar.progress(i + 1)
         progress_placeholder.empty()
         st.rerun()
 elif not st.session_state.is_running and 'click_run_toggle' in st.session_state:
-     status_placeholder.empty() # Clear status text when stopped
+     status_placeholder.empty()
 
 
 # --- MASTER RERUN CONTROLLER ---
