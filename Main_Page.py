@@ -187,6 +187,14 @@ if 'click_log' not in st.session_state: st.session_state.click_log = ["Ready."]
 
 # --- MAIN PAGE LAYOUT ---
 st.title("PT Dashboard")
+st.html("""
+  <style>
+    [alt=Logo] {
+      height: 4.5rem;
+    }
+  </style>
+        """)
+st.logo("data/logo.png", size="large")
 st.sidebar.success("Select a page above.")
 st.info("Powered by Hedge Fund Technology!")
 

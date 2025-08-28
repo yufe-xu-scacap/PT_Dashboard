@@ -8,6 +8,15 @@ import pandas_market_calendars as mcal
 import os
 
 # --- Page Configuration ---
+st.html("""
+  <style>
+    [alt=Logo] {
+      height: 4.5rem;
+    }
+  </style>
+        """)
+st.logo("data/logo.png", size="large")
+
 st.set_page_config(
     page_title="Mistrade Check & CSV Splitter",
     page_icon="🔎",

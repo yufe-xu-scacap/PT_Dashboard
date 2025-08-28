@@ -8,6 +8,15 @@ import re
 from bs4 import BeautifulSoup
 
 
+st.html("""
+  <style>
+    [alt=Logo] {
+      height: 4.5rem;
+    }
+  </style>
+        """)
+st.logo("data/logo.png", size="large")
+
 # --- Helper Function for Downloading ---
 @st.cache_data
 def convert_df_to_csv(df: pd.DataFrame):

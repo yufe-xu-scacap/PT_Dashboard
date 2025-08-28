@@ -14,6 +14,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # --- Streamlit Page Configuration ---
+st.html("""
+  <style>
+    [alt=Logo] {
+      height: 4.5rem;
+    }
+  </style>
+        """)
+st.logo("data/logo.png", size="large")
 st.set_page_config(layout="wide", page_title="Daily PnL Report Generation")
 st.title("📈 Daily PnL Report Generation")
 
@@ -553,7 +561,7 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         df_t4 = report_data["ProfitandLoss_T-4"].copy()
         df_t5 = report_data["ProfitandLoss_T-5"].copy()
         df_trades = report_data.get("Trades")
-        df_Instrument = pd.read_csv("Instrument list.csv")
+        df_Instrument = pd.read_csv("data/Instrument list.csv")
 
         # --- APPLY PNL OVERRIDE IF PROVIDED --- ### MODIFIED SECTION ###
         if pnl_override:

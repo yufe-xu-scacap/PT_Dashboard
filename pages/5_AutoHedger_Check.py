@@ -9,6 +9,14 @@ from matplotlib.dates import DateFormatter
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
 
+st.html("""
+  <style>
+    [alt=Logo] {
+      height: 4.5rem;
+    }
+  </style>
+        """)
+st.logo("data/logo.png", size="large")
 
 # --- Streamlit App Layout ---
 st.set_page_config(layout="wide")

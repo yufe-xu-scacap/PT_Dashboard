@@ -3,6 +3,15 @@ import pandas as pd
 import numpy as np
 import os
 
+st.html("""
+  <style>
+    [alt=Logo] {
+      height: 4.5rem;
+    }
+  </style>
+        """)
+st.logo("data/logo.png", size="large")
+
 # --- Page Configuration ---
 st.set_page_config(
     page_title="Spread Analysis",
