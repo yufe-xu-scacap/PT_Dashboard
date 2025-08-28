@@ -4,8 +4,8 @@
   },
   "cooldown": {
     "high_touch_cooldown": 5,
-    "halter_cooldown": 60,
-    "gross_exp_cooldown": 60
+    "halter_cooldown": 120,
+    "gross_exp_cooldown": 120
   },
   "exposure_threshold": {
     "stage1": 6000000,

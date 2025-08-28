@@ -15,7 +15,7 @@ import win32gui
 import win32api
 from pynput import mouse
 
-@st.cache_data
+
 def load_config(filepath="config.json"):
     """Loads the configuration from a JSON file."""
     try:
