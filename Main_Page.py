@@ -137,13 +137,25 @@ def parse_gross_exposure_value(text):
 # --- Click Automation Helper Functions ---
 mouse_controller = mouse.Controller()
 
-def find_exact_window(title):
-    """Finds the window handle for a given exact window title."""
-    try:
-        hwnd = win32gui.FindWindow(None, title)
-        return hwnd if hwnd != 0 else None
-    except Exception:
-        return None
+def find_exact_window(title_part):
+    """Finds the window handle for a title containing the given substring."""
+
+    def callback(hwnd, hwnds):
+        # Check if the window is visible
+        if win32gui.IsWindowVisible(hwnd):
+            # Get the window's full title
+            window_title = win32gui.GetWindowText(hwnd)
+            # If the substring is found in the title, add the handle to our list
+            if title_part.lower() in window_title.lower():
+                hwnds.append(hwnd)
+        return True  # Continue enumeration
+
+    hwnds = []
+    # EnumWindows calls our 'callback' function for every top-level window.
+    win32gui.EnumWindows(callback, hwnds)
+
+    # Return the first handle found, or None if the list is empty.
+    return hwnds[0] if hwnds else None
 
 def perform_realistic_click(hwnd, x, y, click_type='left'):
     """Simulates a realistic click and logs actions to the Streamlit session state."""
