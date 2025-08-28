@@ -4,7 +4,7 @@ import pygetwindow as gw
 import time
 from datetime import datetime
 import re
-
+import json
 # Imports for OCR alerts
 import pyautogui
 import pytesseract
@@ -14,6 +14,24 @@ from PIL import Image
 import win32gui
 import win32api
 from pynput import mouse
+
+@st.cache_data
+def load_config(filepath="config.json"):
+    """Loads the configuration from a JSON file."""
+    try:
+        with open(filepath, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        st.error(f"Configuration file not found at '{filepath}'. Please create it.")
+        return None
+    except json.JSONDecodeError:
+        st.error(f"Error decoding the JSON from '{filepath}'. Please check its format.")
+        return None
+
+# Load the configuration
+config = load_config()
+if not config:
+    st.stop() # Stops the script if the config file is missing or invalid
 
 
 # --- PAGE CONFIGURATION ---
@@ -43,35 +61,33 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
 # --- SCRIPT CONSTANTS ---
 # General
-CHECK_INTERVAL = 5  # Seconds for alert monitoring
+CHECK_INTERVAL = config['general']['check_interval']
 
 # 1. High Touch Alert
 HIGH_TOUCH_SOUND_FILE = 'Sounds/notify.wav'
 HIGH_TOUCH_SEARCH_TERMS = ["Quote Request"]
-HIGH_TOUCH_COOLDOWN = 5
+HIGH_TOUCH_COOLDOWN = config['cooldown']['high_touch_cooldown']
 
 # 2. HALTER Alert
 HALTER_SOUND_FILE = 'Sounds/error.wav'
-HALTER_WINDOW_TITLE = "Scalable_Quoting_Version_1.0"
+HALTER_WINDOW_TITLE = config['windows']['halter_window_title']
 HALTER_SEARCH_TERMS = ['halterr', 'unkn', 'malterr', 'malter', 'halter', 'unknown']
-HALTER_COOLDOWN = 60
+HALTER_COOLDOWN = config['cooldown']['halter_cooldown']
 
 # 3. Gross Exposure Alert
-GROSS_EXP_WINDOW_TITLE = "Scalable_Hedging_OCR"
+GROSS_EXP_WINDOW_TITLE = config['cooldown']['gross_exp_window_title']
 GROSS_EXP_SOUND_FILES = {
     6000000: 'Sounds/Alert_6M.mp3',
     8000000: 'Sounds/Alert_8M.mp3',
     10000000: 'Sounds/Alert_10M.mp3'
 }
-GROSS_EXP_COOLDOWN = 60
+GROSS_EXP_COOLDOWN = config['windows']['gross_exp_cooldown']
 
 # 4. Click Automation
-CLICKER_TARGET_WINDOW_TITLE = "Scalable_Hedging_Version_3.0 - Trading Manager <shared>"
-DELAY_BETWEEN_CLICKS = 0.5
-
+CLICKER_TARGET_WINDOW_TITLE = config['windows']['click_target_window_title']
+DELAY_BETWEEN_CLICKS = config['clicker']['delay_between_clicks']
 
 # --- HELPER FUNCTIONS ---
 
