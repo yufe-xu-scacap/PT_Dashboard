@@ -79,9 +79,9 @@ HALTER_COOLDOWN = config['cooldown']['halter_cooldown']
 # 3. Gross Exposure Alert
 GROSS_EXP_WINDOW_TITLE = config['cooldown']['gross_exp_window_title']
 GROSS_EXP_SOUND_FILES = {
-    6000000: 'Sounds/Alert_6M.mp3',
-    8000000: 'Sounds/Alert_8M.mp3',
-    10000000: 'Sounds/Alert_10M.mp3'
+    config['exposure_threshold']['stage1']: 'Sounds/Alert_stage1.mp3',
+    config['exposure_threshold']['stage2']: 'Sounds/Alert_stage2.mp3',
+    config['exposure_threshold']['stage3']: 'Sounds/Alert_stage3.mp3'
 }
 GROSS_EXP_COOLDOWN = config['windows']['gross_exp_cooldown']
 

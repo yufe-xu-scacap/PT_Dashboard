@@ -180,7 +180,7 @@ def create_table_image(
         domain=dict(x=[0, table_width_fraction], y=[0, 1]),
         header=dict(
             values=[f"<b>{df.index.name}</b>"] + list(df.columns),
-            fill_color='#6BDBCB',
+            fill_color='#A8D0CA',
             align=align_header,
             font=dict(color='#101112', size=18),
             height=35
@@ -386,8 +386,8 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
 
     # --- LAYOUT UPDATING ---
     fig.update_layout(
-        title=dict(text='<b>Daily PnL Breakdown (T-4 to T-0)</b>', y=0.95, x=0.5, xanchor='center', yanchor='top',
-                   font=dict(size=28, color='#101112')),
+        title=dict(text='Daily PnL Breakdown (T-4 to T-0)', y=0.95, x=0.5, xanchor='center', yanchor='top',
+                   font=dict(size=24, color='#101112')),
         plot_bgcolor='white', paper_bgcolor='white', hovermode='x unified',
         font=dict(family="Arial, sans-serif", color='#101112'),
         margin=dict(t=80, b=150, l=80, r=80),
@@ -436,18 +436,18 @@ def create_turnover_plot(total_turnover_data, accepted_turnover_data, df_date, w
                          hovertemplate='Accepted RFQ: %{customdata:,.0f} EUR<extra></extra>',
                          customdata=df_plot['Accepted_RFQ_Turnover'].values))
     fig.add_trace(
-        go.Bar(x=df_plot['DateLabel'], y=df_plot['Hedge_Turnover_M'], name='Hedge Turnover', marker_color='#349386',
+        go.Bar(x=df_plot['DateLabel'], y=df_plot['Hedge_Turnover_M'], name='Hedge Turnover', marker_color='#a8d0ca',
                text=df_plot['Hedge_Turnover_M'], textposition='inside', insidetextanchor='middle',
                texttemplate='%{text:.1f}M', textfont=dict(size=20, color='#101112', family="Arial, sans-serif"),
                hovertemplate='Hedge: %{customdata:,.0f} EUR<extra></extra>',
                customdata=df_plot['Hedge_Turnover'].values))
     fig.add_trace(
         go.Bar(x=df_plot['DateLabel'], y=[0] * len(df_plot), text=df_plot['Total_Turnover_M'], textposition='outside',
-               texttemplate='<b>%{text:.1f}M</b>', textfont=dict(size=20, color='#101112', family="Arial, sans-serif"),
+               texttemplate='%{text:.1f}M', textfont=dict(size=20, color='#101112', family="Arial, sans-serif"),
                cliponaxis=False, showlegend=False, hoverinfo='none'))
     fig.update_layout(barmode='stack',
-                      title=dict(text='<b>Daily Turnover Breakdown (T-4 to T-0)</b>', y=0.95, x=0.5, xanchor='center',
-                                 yanchor='top', font=dict(size=28, color='#101112', family="Arial, sans-serif")),
+                      title=dict(text='Daily Turnover Breakdown (T-4 to T-0)', y=0.95, x=0.5, xanchor='center',
+                                 yanchor='top', font=dict(size=24, color='#101112', family="Arial, sans-serif")),
                       plot_bgcolor='white', paper_bgcolor='white', hovermode='x unified',
                       font=dict(family="Arial, sans-serif", color='#101112'), margin=dict(t=80, b=80, l=80, r=80),
                       legend=dict(orientation="v", yanchor="top", y=0.98, xanchor="left", x=0.02, font=dict(size=20),
@@ -516,8 +516,8 @@ def create_top_performers_plot(df_PnL, df_trades, df_Instrument, width: int, hei
         customdata=df_plot[['Security Name', 'ISIN', 'Total PnL (€)', 'Turnover (€)']].values))
 
     fig.update_layout(
-        title=dict(text='<b>Top 10 Winners & Losers by PnL</b>', y=0.95, x=0.5, xanchor='center', yanchor='top',
-                   font=dict(size=28, color='#101112', family="Arial, sans-serif")), plot_bgcolor='white',
+        title=dict(text='Top 10 Winners & Losers by PnL', y=0.95, x=0.5, xanchor='center', yanchor='top',
+                   font=dict(size=24, color='#101112', family="Arial, sans-serif")), plot_bgcolor='white',
         paper_bgcolor='white', font=dict(family="Arial, sans-serif", color='#101112'),
         ### --- MODIFIED --- ### Use the new dynamic left margin
         margin=dict(t=80, b=80, l=left_margin, r=40),
@@ -540,7 +540,7 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         PNL_PLOT_WIDTH, PNL_PLOT_HEIGHT = 1600, 900
         TURNOVER_PLOT_WIDTH, TURNOVER_PLOT_HEIGHT = 1600, 900
         TOP_PERF_PLOT_WIDTH, TOP_PERF_PLOT_HEIGHT = 1600, 1000
-        PNL_TABLE_WIDTH, PNL_TABLE_HEIGHT = 720, 360
+        PNL_TABLE_WIDTH, PNL_TABLE_HEIGHT = 720, 330
         TRADING_TABLE_WIDTH, TRADING_TABLE_HEIGHT = 720, 360
 
         update_log("Processing report data...", log_list, log_placeholder)
@@ -690,11 +690,14 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         df_Trading_Statistics = pd.DataFrame(data=Statistics_data, index=row_names_Trading,
                                              columns=['Market Making', 'Fractional'])
         df_Trading_Statistics.index.name = ""
-        PnL_data = [f"{Daily_PnL_MM:,.0f}", f"{Daily_PnL_MA5:,.0f}", f"{Daily_PnL_adj:,.0f}",
+        PnL_data = [f"{Daily_PnL_MM:,.0f}", f"{Daily_PnL_MA5:,.0f}",
+                    # f"{Daily_PnL_adj:,.0f}",
                     trade_metrics['PnL_per_RFQ'], trade_metrics['PnL_per_RFQ_Turnover'],
                     trade_metrics['Net_PnL_per_RFQ_Turnover'], f"{Total_Mtd_PnL_MM:,.0f}", f"{Total_Ytd_PnL_MM:,.0f}",
                     f"{Gross_Exposure_MM + Gross_Exposure_FR:,.0f}", f"{Net_Exposure_MM + Net_Exposure_FR:,.0f}"]
-        row_names_PnL = ['Daily PnL (€)', 'Daily PnL (MA5) (€)\uFE61', 'Total Daily PnL (€) Adj', 'PnL per RFQ (€)',
+        row_names_PnL = ['Daily PnL (€)', 'Daily PnL (MA5) (€)\uFE61',
+                         # 'Total Daily PnL (€) Adj',
+                         'PnL per RFQ (€)',
                          'PnL per RFQ Turnover', 'Net PnL per RFQ Turnover', 'Total MtD PnL (€)', 'Total YtD PnL (€)',
                          'Gross Exposure (€)', 'Net Exposure (€)']
         df_PnL_Statistics = pd.DataFrame(data=PnL_data, index=row_names_PnL, columns=['Market Making'])
