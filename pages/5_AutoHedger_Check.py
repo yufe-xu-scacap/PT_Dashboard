@@ -32,9 +32,9 @@ col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
 with col1:
     uploaded_file = st.file_uploader("Upload your trade data (CSV)", type="csv")
 with col2:
-    start_time_str = st.text_input("Start Time (HH:MM:SS)", "09:49:00")
+    start_time_str = st.text_input("Start Time (HH:MM:SS)", "09:00:00")
 with col3:
-    end_time_str = st.text_input("End Time (HH:MM:SS)", "11:44:00")
+    end_time_str = st.text_input("End Time (HH:MM:SS)", "17:00:00")
 with col4:
     st.markdown("<br>", unsafe_allow_html=True)
     run_button = st.button('Run Analysis')
