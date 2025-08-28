@@ -12,6 +12,9 @@
     "stage2": 8000000,
     "stage3": 10000000
   },
+  "PnL_threshold": {
+    "delta_PnL": 2000
+  },
   "windows": {
     "halter_window_title": "Scalable_Quoting_Version_1.0",
     "gross_exp_window_title": "Scalable_Hedging_OCR",

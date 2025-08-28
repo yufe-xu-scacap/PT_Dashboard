@@ -84,6 +84,10 @@ GROSS_EXP_SOUND_FILES = {
     config['exposure_threshold']['stage3']: 'Sounds/Alert_stage3.mp3'
 }
 GROSS_EXP_COOLDOWN = config['cooldown']['gross_exp_cooldown']
+PNL_THRESHOLD = config['PnL_threshold']['delta_PnL']
+PNL_ALERT_COOLDOWN = 10 # Example: Cooldown in seconds for the PnL delta alert
+PNL_ALERT_SOUND = "Sounds/2000delta.m4a" # Path to the PnL alert sound
+
 
 # 4. Click Automation
 CLICKER_TARGET_WINDOW_TITLE = config['windows']['click_target_window_title']
@@ -132,6 +136,21 @@ def parse_gross_exposure_value(text):
     if match:
         value_string = match.group(1).replace(" ", "")
         return int(value_string)
+    return None
+
+
+def parse_PnL_value(text):
+    """
+    Finds text between 'SCALMM' and 'EUR', then removes spaces and hashtags.
+    """
+    # Use a non-greedy search (.*?) to find the text in between
+    match = re.search(r"SCALMM\s*(.*?)\s*EUR", text)
+    if match:
+        # Extract the captured group (the part in parentheses)
+        extracted_text = match.group(1)
+        # Clean the text by removing spaces and hashtags
+        cleaned_text = extracted_text.replace(" ", "").replace("#", "")
+        return cleaned_text
     return None
 
 # --- Click Automation Helper Functions ---
@@ -358,30 +377,68 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
     if not rect:
         log_msg = f"[{timestamp}] Window '{GROSS_EXP_WINDOW_TITLE}' not found."
         st.session_state.gross_exp_last_alert = 0 # Reset cooldown
+        st.session_state.last_pnl_value = None # Reset PnL tracking
     else:
         text = extract_text_from_image(capture_screenshot(rect))
+
+        # --- 1. Gross Exposure Logic (Existing) ---
         value = parse_gross_exposure_value(text)
+        gross_exp_log_part = ""
         if value is not None:
             alert_triggered = False
-            log_msg = f"[{timestamp}] Gross Exposure Found: {value: ,}"
+            gross_exp_log_part = f"Gross Exp: {value: ,}"
             for threshold in sorted(gross_exposure_sounds.keys(), reverse=True):
                 if value > threshold:
                     if (now - st.session_state.gross_exp_last_alert) > GROSS_EXP_COOLDOWN:
                         sound_to_play = gross_exposure_sounds[threshold]
                         sound_to_play.play()
-                        log_msg += f" -> ALERT! Exceeds {threshold:,}. Sound PLAYED."
+                        gross_exp_log_part += f" -> ALERT! Exceeds {threshold:,}."
                         st.session_state.gross_exp_last_alert = now
                     else:
-                        log_msg += f" -> Exceeds {threshold:,}. (Cooldown active)."
+                        gross_exp_log_part += f" -> Exceeds {threshold:,} (Cooldown)."
                     alert_triggered = True
-                    break # Stop checking after the first threshold is met
+                    break
             if not alert_triggered:
-                st.session_state.gross_exp_last_alert = 0 # Reset if below all thresholds
+                st.session_state.gross_exp_last_alert = 0
         else:
-            log_msg = f"[{timestamp}] Gross Exposure check complete. Value not found."
-            st.session_state.gross_exp_last_alert = 0 # Reset if value not parsed
+            gross_exp_log_part = "Gross Exp: Not Found"
+            st.session_state.gross_exp_last_alert = 0
 
-    if st.session_state.gross_exp_log[-1] != log_msg:
+        # --- 2. PnL Delta Logic (NEW) ---
+        pnl_value = parse_PnL_value(text)
+        pnl_log_part = ""
+        if pnl_value is not None:
+            # Check if there is a previous value to compare against
+            if st.session_state.last_pnl_value is not None:
+                delta = pnl_value - st.session_state.last_pnl_value
+                # Format the delta with a + or - sign
+                pnl_log_part = f"PnL: {pnl_value: ,} (Δ {delta:+ ,})"
+
+                # Check if absolute delta exceeds the threshold
+                if abs(delta) > PNL_THRESHOLD:
+                    # Check PnL alert cooldown
+                    if (now - st.session_state.pnl_last_alert) > PNL_ALERT_COOLDOWN:
+                        PNL_ALERT_SOUND.play()
+                        pnl_log_part += f" -> DELTA ALERT!"
+                        st.session_state.pnl_last_alert = now
+                    else:
+                        pnl_log_part += f" (Delta Cooldown)"
+            else:
+                # First time seeing the PnL value, just log it and start tracking
+                pnl_log_part = f"PnL: {pnl_value: ,} (Tracking started)"
+
+            # ALWAYS update the last known PnL value for the next check
+            st.session_state.last_pnl_value = pnl_value
+        else:
+            pnl_log_part = "PnL: Not Found"
+            # Reset PnL tracking if the value can no longer be found
+            st.session_state.last_pnl_value = None
+
+        # --- 3. Combine log messages for a single, clean output ---
+        log_msg = f"[{timestamp}] {gross_exp_log_part} | {pnl_log_part}"
+
+    # Append to log if the message is new
+    if log_msg and (not st.session_state.gross_exp_log or st.session_state.gross_exp_log[-1] != log_msg):
         st.session_state.gross_exp_log.append(log_msg)
 
 
