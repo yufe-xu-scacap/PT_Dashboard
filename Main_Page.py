@@ -144,7 +144,7 @@ def parse_PnL_value(text):
     Finds text between 'SCALMM' and 'EUR', then removes spaces and hashtags.
     """
     # Use a non-greedy search (.*?) to find the text in between
-    match = re.search(r"SCALMM\s*(.*?)\s*EUR", text)
+    match = re.search(r"SCALMM\s([\d\s]+)EUR", text)
     if match:
         # Extract the captured group (the part in parentheses)
         extracted_text = match.group(1)
