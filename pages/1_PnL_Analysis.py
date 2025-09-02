@@ -85,7 +85,7 @@ def get_reports(date: str, bearer_token: str, log_list: List[str], log_placehold
     update_log(f"Searching for P&L reports...", log_list, log_placeholder)
     df_t0 = _fetch_report(date_str,
                           {"report_name": "ProfitandLoss", "name_format": "{date}-{time}FIS_EOD_{report_name}.csv"},
-                          "1805", "1810")
+                          "1803", "1810")
     if df_t0 is not None:
         report_dataframes['ProfitandLoss'] = df_t0.copy()
     else:
@@ -209,9 +209,16 @@ def create_table_image(
     )
     return pio.to_image(fig, format='png', width=width, height=height, scale=1.0)
 
+
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.io as pio
+
+
 def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, df_date, width: int, height: int):
     """
-    Generates the final PnL Breakdown plot with intelligent, compact, non-overlapping labels.
+    Generates the final PnL Breakdown plot with intelligent, compact, non-overlapping labels
+    and perfectly aligned zero-axes.
     """
     # --- DATA PREPARATION ---
     plot_data_list = [
@@ -275,44 +282,53 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
         hovertemplate='Late Session PnL/Turnover: %{y:.2f} bps<extra></extra>'
     ))
 
-    # --- AXIS RANGE CALCULATION ---
+    ### MODIFICATION START ###
+    # --- AXIS RANGE CALCULATION FOR ALIGNED ZERO-LINES ---
+
+    # 1. Gather all data points for EUR and BPS axes
     all_eur_values = pd.concat([df_plot['Total_PnL'].dropna(), df_plot['Intraday_PnL'].dropna()])
     all_bps_values = pd.concat([df_plot['pnl_turnover_early_bps'], df_plot['pnl_turnover_late_bps']]).dropna()
-    has_negative_values = (all_eur_values.min() < 0 if not all_eur_values.empty else False) or \
-                          (all_bps_values.min() < 0 if not all_bps_values.empty else False)
 
-    if not has_negative_values:
-        y_axis_min, bps_axis_min = 0, 0
-        y_axis_max = all_eur_values.max() * 1.25 if not all_eur_values.empty and all_eur_values.max() > 0 else 1000
-        bps_axis_max = all_bps_values.max() * 1.25 if not all_bps_values.empty and all_bps_values.max() > 0 else 5
+    # 2. Determine the data min/max, defaulting to 0 if empty
+    eur_min = all_eur_values.min() if not all_eur_values.empty else 0
+    eur_max = all_eur_values.max() if not all_eur_values.empty else 0
+    bps_min = all_bps_values.min() if not all_bps_values.empty else 0
+    bps_max = all_bps_values.max() if not all_bps_values.empty else 0
+
+    # 3. If all data is non-negative, the axes simply start at 0.
+    if eur_min >= 0 and bps_min >= 0:
+        negative_proportion = 0
     else:
-        def get_stable_range(series):
-            if series.empty: return 0, 1
-            data_min, data_max = series.min(), series.max()
-            data_range = data_max - data_min if data_max > data_min else abs(data_max) or 1
-            padding = data_range * 0.25  # Increased padding to make room for labels
-            final_min = min(0, data_min - padding)
-            final_max = max(0, data_max + padding)
-            return final_min, final_max
+        # Calculate the proportion of the range that is negative for each axis
+        eur_range = eur_max - eur_min if (eur_max - eur_min) > 0 else 1
+        bps_range = bps_max - bps_min if (bps_max - bps_min) > 0 else 1
 
-        y_axis_min, y_axis_max = get_stable_range(all_eur_values)
-        bps_axis_min, bps_axis_max = get_stable_range(all_bps_values)
+        eur_neg_prop = abs(min(0, eur_min)) / eur_range
+        bps_neg_prop = abs(min(0, bps_min)) / bps_range
 
-        y_total_range = y_axis_max - y_axis_min
-        y_neg_proportion = abs(y_axis_min) / y_total_range if y_total_range > 0 and y_axis_min < 0 else 0
-        bps_total_range = bps_axis_max - bps_axis_min
-        bps_neg_proportion = abs(bps_axis_min) / bps_total_range if bps_total_range > 0 and bps_axis_min < 0 else 0
-        master_neg_proportion = max(y_neg_proportion, bps_neg_proportion)
+        # The master proportion is the LARGER of the two, ensuring both axes have enough negative space
+        negative_proportion = max(eur_neg_prop, bps_neg_prop)
 
-        if master_neg_proportion > 0:
-            if y_neg_proportion < master_neg_proportion:
-                y_axis_min = (master_neg_proportion * y_axis_max) / (master_neg_proportion - 1)
-            if bps_neg_proportion < master_neg_proportion:
-                bps_axis_min = (master_neg_proportion * bps_axis_max) / (master_neg_proportion - 1)
+    # 4. Calculate final axis ranges using the master proportion
+    # Add 25% padding to the top for labels and visual space
+    y_axis_max = eur_max * 1.25 if eur_max > 0 else 1000
+    bps_axis_max = bps_max * 1.25 if bps_max > 0 else 5
 
-    bps_range = [bps_axis_min, bps_axis_max]
+    if negative_proportion == 0:
+        y_axis_min = 0
+        bps_axis_min = 0
+    else:
+        # This formula calculates the required minimum value to achieve the desired negative_proportion
+        # of the total axis range, given a fixed maximum value.
+        y_axis_min = (negative_proportion * y_axis_max) / (negative_proportion - 1)
+        bps_axis_min = (negative_proportion * bps_axis_max) / (negative_proportion - 1)
+
+    bps_range_final = [bps_axis_min, bps_axis_max]
+
+    ### MODIFICATION END ###
 
     # --- FINAL ANNOTATION LOGIC ---
+    # This logic now uses the correctly calculated axis ranges
     y_range_for_norm = y_axis_max - y_axis_min
     bps_range_for_norm = bps_axis_max - bps_axis_min
     for i, date in enumerate(df_plot['DateLabel']):
@@ -363,14 +379,11 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
                 label_a = labels_to_plot[j]
                 label_b = labels_to_plot[j + 1]
 
-                # Approximate final positions in normalized units
                 pos_a = label_a['normalized_y'] + (final_shifts[j] / (height * 0.8))
                 pos_b = label_b['normalized_y'] + (final_shifts[j + 1] / (height * 0.8))
-
                 separation = abs(pos_a - pos_b)
 
                 if separation < MIN_SEPARATION:
-                    # If they are too close, push them apart
                     push_amount = (MIN_SEPARATION - separation) * (height * 0.8) / 2
                     final_shifts[j] += push_amount
                     final_shifts[j + 1] -= push_amount
@@ -410,13 +423,15 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
         yaxis2=dict(title='Win Rate', overlaying='y', side='right', range=[0, 1], tickformat='.0%', showgrid=False,
                     showline=False, anchor='x', title_font=dict(color='#FFC880', size=22),
                     tickfont=dict(color='#FFC880', size=20)),
-        yaxis3=dict(title=dict(text='PnL in bps', standoff=15), range=bps_range, overlaying='y', side='right',
+        yaxis3=dict(title=dict(text='PnL in bps', standoff=15), range=bps_range_final, overlaying='y', side='right',
                     showgrid=False, zeroline=True, zerolinewidth=1, zerolinecolor='grey',
                     showline=True, linewidth=2, linecolor='#371d76', anchor='free', position=1.0,
                     title_font=dict(color='#371d76', size=22), tickfont=dict(color='#371d76', size=20), ticks="outside",
                     minor=dict(ticks="outside", ticklen=5, tickcolor="black", showgrid=False, griddash='dot',
                                gridcolor='LightGrey'))
     )
+    # The pio.to_image call is kept as is, assuming you have the necessary dependencies (kaleido) installed.
+    # If running in an environment without them, you might want to return `fig` and call `fig.show()`.
     return pio.to_image(fig, format='png', width=width, height=height, scale=1)
 
 def create_turnover_plot(total_turnover_data, accepted_turnover_data, df_date, width: int, height: int):

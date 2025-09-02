@@ -33,7 +33,6 @@ config = load_config()
 if not config:
     st.stop() # Stops the script if the config file is missing or invalid
 
-
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Main Dashboard",
@@ -52,7 +51,6 @@ except Exception as e:
 st.markdown(
     """
     <style>
-    /* Style for the sidebar navigation links */
     [data-testid="stSidebarNav"] a {
         font-size: 18px !important;
     }
@@ -85,9 +83,8 @@ GROSS_EXP_SOUND_FILES = {
 }
 GROSS_EXP_COOLDOWN = config['cooldown']['gross_exp_cooldown']
 PNL_THRESHOLD = config['PnL_threshold']['delta_PnL']
-PNL_ALERT_COOLDOWN = 10 # Example: Cooldown in seconds for the PnL delta alert
-PNL_ALERT_SOUND = "Sounds/2000delta.m4a" # Path to the PnL alert sound
-
+PNL_ALERT_COOLDOWN = 10  # Example: Cooldown in seconds for the PnL delta alert
+PNL_ALERT_SOUND_PATH = "Sounds/2000delta.wav"  # Path to the PnL alert sound
 
 # 4. Click Automation
 CLICKER_TARGET_WINDOW_TITLE = config['windows']['click_target_window_title']
@@ -138,19 +135,15 @@ def parse_gross_exposure_value(text):
         return int(value_string)
     return None
 
-
 def parse_PnL_value(text):
     """
-    Finds text between 'SCALMM' and 'EUR', then removes spaces and hashtags.
+    Extrahiert die Zahl zwischen 'SCALMM' und 'EUR', entfernt Leerzeichen und Hashtags.
     """
-    # Use a non-greedy search (.*?) to find the text in between
-    match = re.search(r"SCALMM\s([\d\s]+)EUR", text)
+    # Regex ist robust gegen unterschiedliche Groß-/Kleinschreibung und optionale Leerzeichen
+    match = re.search(r'scalmm\s*([\d\s#,.]+?)\s*eur\b', text, re.IGNORECASE)
     if match:
-        # Extract the captured group (the part in parentheses)
-        extracted_text = match.group(1)
-        # Clean the text by removing spaces and hashtags
-        cleaned_text = extracted_text.replace(" ", "").replace("#", "")
-        return cleaned_text
+        value_string = match.group(1).replace(" ", "").replace("#", "").replace(",", "").replace(".", "")
+        return int(value_string)
     return None
 
 # --- Click Automation Helper Functions ---
@@ -158,26 +151,17 @@ mouse_controller = mouse.Controller()
 
 def find_exact_window(title_part):
     """Finds the window handle for a title containing the given substring."""
-
     def callback(hwnd, hwnds):
-        # Check if the window is visible
         if win32gui.IsWindowVisible(hwnd):
-            # Get the window's full title
             window_title = win32gui.GetWindowText(hwnd)
-            # If the substring is found in the title, add the handle to our list
             if title_part.lower() in window_title.lower():
                 hwnds.append(hwnd)
-        return True  # Continue enumeration
-
+        return True
     hwnds = []
-    # EnumWindows calls our 'callback' function for every top-level window.
     win32gui.EnumWindows(callback, hwnds)
-
-    # Return the first handle found, or None if the list is empty.
     return hwnds[0] if hwnds else None
 
 def perform_realistic_click(hwnd, x, y, click_type='left'):
-    """Simulates a realistic click and logs actions to the Streamlit session state."""
     log_entry = ""
     try:
         original_pos = mouse_controller.position
@@ -195,26 +179,25 @@ def perform_realistic_click(hwnd, x, y, click_type='left'):
         if 'original_pos' in locals():
             mouse_controller.position = original_pos
 
-
 # --- INITIALIZE SOUND OBJECTS ---
 high_touch_sound = initialize_sounds(HIGH_TOUCH_SOUND_FILE)
 halter_sound = initialize_sounds(HALTER_SOUND_FILE)
 gross_exposure_sounds = initialize_sounds(GROSS_EXP_SOUND_FILES)
+pnl_alert_sound = initialize_sounds(PNL_ALERT_SOUND_PATH)  # NEU
 
 # --- INITIALIZE SESSION STATE ---
-# For Alerts
 if 'high_touch_log' not in st.session_state: st.session_state.high_touch_log = ["Ready."]
 if 'halter_log' not in st.session_state: st.session_state.halter_log = ["Ready."]
 if 'gross_exp_log' not in st.session_state: st.session_state.gross_exp_log = ["Ready."]
 if 'high_touch_last_alert' not in st.session_state: st.session_state.high_touch_last_alert = 0
 if 'halter_last_alert' not in st.session_state: st.session_state.halter_last_alert = 0
 if 'gross_exp_last_alert' not in st.session_state: st.session_state.gross_exp_last_alert = 0
-# For Click Automation
 if 'click_points' not in st.session_state: st.session_state.click_points = []
 if 'is_running' not in st.session_state: st.session_state.is_running = False
 if 'capture_mode' not in st.session_state: st.session_state.capture_mode = False
 if 'click_log' not in st.session_state: st.session_state.click_log = ["Ready."]
-
+if 'last_pnl_value' not in st.session_state: st.session_state.last_pnl_value = None
+if 'pnl_last_alert' not in st.session_state: st.session_state.pnl_last_alert = 0
 
 # --- MAIN PAGE LAYOUT ---
 st.title("PT Dashboard")
@@ -242,7 +225,6 @@ else:
         if run_high_touch: st.success("Status: Enabled")
         else: st.error("Status: Disabled")
     with col3:
-        # <-- CHANGE: Static title for expander
         with st.expander("High Touch Log", expanded=False):
             st.info(f"Latest: {st.session_state.high_touch_log[-1]}")
             log_container = st.container(height=200)
@@ -260,7 +242,6 @@ else:
         if run_halter: st.success("Status: Enabled")
         else: st.error("Status: Disabled")
     with col6:
-        # <-- CHANGE: Static title for expander
         with st.expander("HALTER Log", expanded=False):
             st.info(f"Latest: {st.session_state.halter_log[-1]}")
             log_container = st.container(height=200)
@@ -278,7 +259,6 @@ else:
         if run_gross_exp: st.success("Status: Enabled")
         else: st.error("Status: Disabled")
     with col9:
-        # <-- CHANGE: Static title for expander
         with st.expander("Gross Exposure Log", expanded=False):
             st.info(f"Latest: {st.session_state.gross_exp_log[-1]}")
             log_container = st.container(height=200)
@@ -311,17 +291,14 @@ with interval_col:
     )
 
 with log_col:
-    # <-- CHANGE: Static title for expander
     with st.expander("Clicker Log", expanded=False):
         st.info(f"Latest: {st.session_state.click_log[-1]}")
         log_container = st.container(height=200)
         for msg in reversed(st.session_state.click_log):
             log_container.text(msg)
 
-# Placeholders for status text and progress bar, which will appear below the controls
 status_placeholder = st.empty()
 progress_placeholder = st.empty()
-
 
 # --- MONITORING & AUTOMATION LOGIC ---
 now = time.time()
@@ -340,11 +317,10 @@ if run_high_touch and not isinstance(high_touch_sound, str):
             log_msg = f"[{timestamp}] Found Quote Request. (Cooldown active)."
     else:
         log_msg = f"[{timestamp}] Check complete. No match."
-        st.session_state.high_touch_last_alert = 0 # Reset cooldown when not found
+        st.session_state.high_touch_last_alert = 0
 
     if st.session_state.high_touch_log[-1] != log_msg:
         st.session_state.high_touch_log.append(log_msg)
-
 
 # 2. HALTER Logic
 if run_halter and not isinstance(halter_sound, str):
@@ -352,7 +328,7 @@ if run_halter and not isinstance(halter_sound, str):
     log_msg = ""
     if not rect:
         log_msg = f"[{timestamp}] Window '{HALTER_WINDOW_TITLE}' not found."
-        st.session_state.halter_last_alert = 0 # Reset cooldown
+        st.session_state.halter_last_alert = 0
     else:
         text = extract_text_from_image(capture_screenshot(rect))
         if any(term in text for term in HALTER_SEARCH_TERMS):
@@ -364,11 +340,10 @@ if run_halter and not isinstance(halter_sound, str):
                 log_msg = f"[{timestamp}] HALTER error detected. (Cooldown active)."
         else:
             log_msg = f"[{timestamp}] HALTER check complete. No errors."
-            st.session_state.halter_last_alert = 0 # Reset cooldown
+            st.session_state.halter_last_alert = 0
 
     if st.session_state.halter_log[-1] != log_msg:
         st.session_state.halter_log.append(log_msg)
-
 
 # 3. Gross Exposure Logic
 if run_gross_exp and all(gross_exposure_sounds.values()):
@@ -376,17 +351,15 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
     log_msg = ""
     if not rect:
         log_msg = f"[{timestamp}] Window '{GROSS_EXP_WINDOW_TITLE}' not found."
-        st.session_state.gross_exp_last_alert = 0 # Reset cooldown
-        st.session_state.last_pnl_value = None # Reset PnL tracking
+        st.session_state.gross_exp_last_alert = 0
+        st.session_state.last_pnl_value = None
     else:
         text = extract_text_from_image(capture_screenshot(rect))
-
-        # --- 1. Gross Exposure Logic (Existing) ---
         value = parse_gross_exposure_value(text)
         gross_exp_log_part = ""
         if value is not None:
             alert_triggered = False
-            gross_exp_log_part = f"Gross Exp: {value: ,}"
+            gross_exp_log_part = f"Gross Exp: {value:,}"
             for threshold in sorted(gross_exposure_sounds.keys(), reverse=True):
                 if value > threshold:
                     if (now - st.session_state.gross_exp_last_alert) > GROSS_EXP_COOLDOWN:
@@ -408,39 +381,28 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
         pnl_value = parse_PnL_value(text)
         pnl_log_part = ""
         if pnl_value is not None:
-            # Check if there is a previous value to compare against
             if st.session_state.last_pnl_value is not None:
                 delta = pnl_value - st.session_state.last_pnl_value
-                # Format the delta with a + or - sign
-                pnl_log_part = f"PnL: {pnl_value: ,} (Δ {delta:+ ,})"
-
-                # Check if absolute delta exceeds the threshold
+                pnl_log_part = f"PnL: {pnl_value:,} (Δ {delta:+,})"
                 if abs(delta) > PNL_THRESHOLD:
-                    # Check PnL alert cooldown
                     if (now - st.session_state.pnl_last_alert) > PNL_ALERT_COOLDOWN:
-                        PNL_ALERT_SOUND.play()
+                        if not isinstance(pnl_alert_sound, str):
+                            pnl_alert_sound.play()
                         pnl_log_part += f" -> DELTA ALERT!"
                         st.session_state.pnl_last_alert = now
                     else:
                         pnl_log_part += f" (Delta Cooldown)"
             else:
-                # First time seeing the PnL value, just log it and start tracking
-                pnl_log_part = f"PnL: {pnl_value: ,} (Tracking started)"
-
-            # ALWAYS update the last known PnL value for the next check
+                pnl_log_part = f"PnL: {pnl_value:,} (Tracking started)"
             st.session_state.last_pnl_value = pnl_value
         else:
             pnl_log_part = "PnL: Not Found"
-            # Reset PnL tracking if the value can no longer be found
             st.session_state.last_pnl_value = None
 
-        # --- 3. Combine log messages for a single, clean output ---
         log_msg = f"[{timestamp}] {gross_exp_log_part} | {pnl_log_part}"
 
-    # Append to log if the message is new
     if log_msg and (not st.session_state.gross_exp_log or st.session_state.gross_exp_log[-1] != log_msg):
         st.session_state.gross_exp_log.append(log_msg)
-
 
 # 4. Click Automation Logic
 if st.session_state.is_running and not st.session_state.click_points:
@@ -492,18 +454,15 @@ if st.session_state.is_running and st.session_state.click_points:
             try: win32gui.SetForegroundWindow(original_foreground_hwnd)
             except Exception: pass
         st.session_state.click_log.append("Sequence complete. Waiting...")
-
-        # This section creates the countdown progress bar
         status_placeholder.text(f"Next sequence in {click_interval} seconds...")
         progress_bar = progress_placeholder.progress(0)
         for i in range(100):
-            time.sleep(click_interval / 100) # Wait for a fraction of the total interval
-            progress_bar.progress(i + 1)     # Update the progress bar
+            time.sleep(click_interval / 100)
+            progress_bar.progress(i + 1)
         progress_placeholder.empty()
         st.rerun()
 elif not st.session_state.is_running and 'click_run_toggle' in st.session_state:
-     status_placeholder.empty() # Clear status text when stopped
-
+    status_placeholder.empty()
 
 # --- MASTER RERUN CONTROLLER ---
 if run_high_touch or run_halter or run_gross_exp:
