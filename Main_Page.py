@@ -77,14 +77,22 @@ HALTER_COOLDOWN = config['cooldown']['halter_cooldown']
 # 3. Gross Exposure Alert
 GROSS_EXP_WINDOW_TITLE = config['windows']['gross_exp_window_title']
 GROSS_EXP_SOUND_FILES = {
-    config['exposure_threshold']['stage1']: 'Sounds/Alert_stage1.mp3',
-    config['exposure_threshold']['stage2']: 'Sounds/Alert_stage2.mp3',
-    config['exposure_threshold']['stage3']: 'Sounds/Alert_stage3.mp3'
+    config['exposure_threshold']['stage1']: 'Sounds/Alert_stage1.wav',
+    config['exposure_threshold']['stage2']: 'Sounds/Alert_stage2.wav',
+    config['exposure_threshold']['stage3']: 'Sounds/Alert_stage3.wav'
 }
 GROSS_EXP_COOLDOWN = config['cooldown']['gross_exp_cooldown']
 PNL_THRESHOLD = config['PnL_threshold']['delta_PnL']
-PNL_ALERT_COOLDOWN = 10  # Example: Cooldown in seconds for the PnL delta alert
+PNL_ALERT_COOLDOWN = config['cooldown']['delta_PnL_cooldown']  # Example: Cooldown in seconds for the PnL delta alert
 PNL_ALERT_SOUND_PATH = "Sounds/2000delta.wav"  # Path to the PnL alert sound
+
+OCR_FAILED_SOUND_FILE = 'Sounds/OCR_failed.wav'
+
+STALE_GROSS_EXP_SOUND_FILE = 'Sounds/Stale_Gross_Exposure.wav'
+STALE_PNL_SOUND_FILE = 'Sounds/Stale_PnL.wav'
+
+NotFound_ALERT_COOLDOWN = config['cooldown']['Not_Found_cooldown']
+STALE_DURATION = config['Stale_Duration']['Stale_Duration']
 
 # 4. Click Automation
 CLICKER_TARGET_WINDOW_TITLE = config['windows']['click_target_window_title']
@@ -184,6 +192,9 @@ high_touch_sound = initialize_sounds(HIGH_TOUCH_SOUND_FILE)
 halter_sound = initialize_sounds(HALTER_SOUND_FILE)
 gross_exposure_sounds = initialize_sounds(GROSS_EXP_SOUND_FILES)
 pnl_alert_sound = initialize_sounds(PNL_ALERT_SOUND_PATH)  # NEU
+ocr_failed_sound = initialize_sounds(OCR_FAILED_SOUND_FILE)
+stale_gross_exp_sound = initialize_sounds(STALE_GROSS_EXP_SOUND_FILE)
+stale_pnl_sound = initialize_sounds(STALE_PNL_SOUND_FILE)
 
 # --- INITIALIZE SESSION STATE ---
 if 'high_touch_log' not in st.session_state: st.session_state.high_touch_log = ["Ready."]
@@ -198,6 +209,12 @@ if 'capture_mode' not in st.session_state: st.session_state.capture_mode = False
 if 'click_log' not in st.session_state: st.session_state.click_log = ["Ready."]
 if 'last_pnl_value' not in st.session_state: st.session_state.last_pnl_value = None
 if 'pnl_last_alert' not in st.session_state: st.session_state.pnl_last_alert = 0
+if 'parsing_last_alert' not in st.session_state: st.session_state.parsing_last_alert = 0
+if 'last_gross_exp_value' not in st.session_state: st.session_state.last_gross_exp_value = None
+if 'gross_exp_stale_since' not in st.session_state: st.session_state.gross_exp_stale_since = 0
+if 'stale_gross_exp_alerted' not in st.session_state: st.session_state.stale_gross_exp_alerted = False
+if 'pnl_stale_since' not in st.session_state: st.session_state.pnl_stale_since = 0
+if 'stale_pnl_alerted' not in st.session_state: st.session_state.stale_pnl_alerted = False
 
 # --- MAIN PAGE LAYOUT ---
 st.title("PT Dashboard")
@@ -323,6 +340,7 @@ if run_high_touch and not isinstance(high_touch_sound, str):
         st.session_state.high_touch_log.append(log_msg)
 
 # 2. HALTER Logic
+# 2. HALTER Logic
 if run_halter and not isinstance(halter_sound, str):
     rect = find_window_by_title_substring(HALTER_WINDOW_TITLE)
     log_msg = ""
@@ -330,76 +348,128 @@ if run_halter and not isinstance(halter_sound, str):
         log_msg = f"[{timestamp}] Window '{HALTER_WINDOW_TITLE}' not found."
         st.session_state.halter_last_alert = 0
     else:
-        text = extract_text_from_image(capture_screenshot(rect))
-        if any(term in text for term in HALTER_SEARCH_TERMS):
-            if (now - st.session_state.halter_last_alert) > HALTER_COOLDOWN:
-                halter_sound.play()
-                st.session_state.halter_last_alert = now
-                log_msg = f"[{timestamp}] HALTER error detected -> Sound PLAYED."
+        try:
+            # This is the code that might fail
+            text = extract_text_from_image(capture_screenshot(rect))
+
+            # If screenshot is successful, continue with normal logic
+            if any(term in text for term in HALTER_SEARCH_TERMS):
+                if (now - st.session_state.halter_last_alert) > HALTER_COOLDOWN:
+                    halter_sound.play()
+                    st.session_state.halter_last_alert = now
+                    log_msg = f"[{timestamp}] HALTER error detected -> Sound PLAYED."
+                else:
+                    log_msg = f"[{timestamp}] HALTER error detected. (Cooldown active)."
             else:
-                log_msg = f"[{timestamp}] HALTER error detected. (Cooldown active)."
-        else:
-            log_msg = f"[{timestamp}] HALTER check complete. No errors."
-            st.session_state.halter_last_alert = 0
+                log_msg = f"[{timestamp}] HALTER check complete. No errors."
+                st.session_state.halter_last_alert = 0
+
+        except OSError as e:
+            # This runs ONLY if the screenshot fails
+            log_msg = f"[{timestamp}] OCR FAILED. Please check."
+            if not isinstance(ocr_failed_sound, str):
+                ocr_failed_sound.play()  # Play the custom error sound
 
     if st.session_state.halter_log[-1] != log_msg:
         st.session_state.halter_log.append(log_msg)
 
 # 3. Gross Exposure Logic
 if run_gross_exp and all(gross_exposure_sounds.values()):
+
     rect = find_window_by_title_substring(GROSS_EXP_WINDOW_TITLE)
     log_msg = ""
     if not rect:
+        # ... (logic for window not found remains the same)
         log_msg = f"[{timestamp}] Window '{GROSS_EXP_WINDOW_TITLE}' not found."
         st.session_state.gross_exp_last_alert = 0
         st.session_state.last_pnl_value = None
+        st.session_state.last_gross_exp_value = None
+        st.session_state.gross_exp_stale_since = 0
+        st.session_state.pnl_stale_since = 0
     else:
-        text = extract_text_from_image(capture_screenshot(rect))
-        value = parse_gross_exposure_value(text)
-        gross_exp_log_part = ""
-        if value is not None:
-            alert_triggered = False
-            gross_exp_log_part = f"Gross Exp: {value:,}"
-            for threshold in sorted(gross_exposure_sounds.keys(), reverse=True):
-                if value > threshold:
-                    if (now - st.session_state.gross_exp_last_alert) > GROSS_EXP_COOLDOWN:
-                        sound_to_play = gross_exposure_sounds[threshold]
-                        sound_to_play.play()
-                        gross_exp_log_part += f" -> ALERT! Exceeds {threshold:,}."
-                        st.session_state.gross_exp_last_alert = now
-                    else:
-                        gross_exp_log_part += f" -> Exceeds {threshold:,} (Cooldown)."
-                    alert_triggered = True
-                    break
-            if not alert_triggered:
-                st.session_state.gross_exp_last_alert = 0
-        else:
-            gross_exp_log_part = "Gross Exp: Not Found"
-            st.session_state.gross_exp_last_alert = 0
+        try:
+            text = extract_text_from_image(capture_screenshot(rect))
+            # Parse both values at the beginning
+            value = parse_gross_exposure_value(text)
+            pnl_value = parse_PnL_value(text)
 
-        # --- 2. PnL Delta Logic (NEW) ---
-        pnl_value = parse_PnL_value(text)
-        pnl_log_part = ""
-        if pnl_value is not None:
-            if st.session_state.last_pnl_value is not None:
-                delta = pnl_value - st.session_state.last_pnl_value
-                pnl_log_part = f"PnL: {pnl_value:,} (Δ {delta:+,})"
-                if abs(delta) > PNL_THRESHOLD:
-                    if (now - st.session_state.pnl_last_alert) > PNL_ALERT_COOLDOWN:
-                        if not isinstance(pnl_alert_sound, str):
-                            pnl_alert_sound.play()
-                        pnl_log_part += f" -> DELTA ALERT!"
-                        st.session_state.pnl_last_alert = now
-                    else:
-                        pnl_log_part += f" (Delta Cooldown)"
+            # --- Build Gross Exp Log Part ---
+            gross_exp_log_part = ""
+            if value is not None:
+                # ... (Normal and Stale logic for Gross Exp remains the same)
+                gross_exp_log_part = f"Gross Exp: {value:,}"
+                alert_triggered = False
+                for threshold in sorted(gross_exposure_sounds.keys(), reverse=True):
+                    if value > threshold:
+                        if (now - st.session_state.gross_exp_last_alert) > GROSS_EXP_COOLDOWN:
+                            gross_exposure_sounds[threshold].play()
+                            gross_exp_log_part += f" -> ALERT! Exceeds {threshold:,}."
+                            st.session_state.gross_exp_last_alert = now
+                        else:
+                            gross_exp_log_part += f" -> Exceeds {threshold:,} (Cooldown)."
+                        alert_triggered = True
+                        break
+                if not alert_triggered: st.session_state.gross_exp_last_alert = 0
+                if value != st.session_state.last_gross_exp_value:
+                    st.session_state.last_gross_exp_value = value
+                    st.session_state.gross_exp_stale_since = now
+                    st.session_state.stale_gross_exp_alerted = False
+                elif not st.session_state.stale_gross_exp_alerted and (now - st.session_state.gross_exp_stale_since) > STALE_DURATION:
+                    if not isinstance(stale_gross_exp_sound, str): stale_gross_exp_sound.play()
+                    gross_exp_log_part += " (STALE!)"
+                    st.session_state.stale_gross_exp_alerted = True
             else:
-                pnl_log_part = f"PnL: {pnl_value:,} (Tracking started)"
-            st.session_state.last_pnl_value = pnl_value
-        else:
-            pnl_log_part = "PnL: Not Found"
-            st.session_state.last_pnl_value = None
+                gross_exp_log_part = "Gross Exp: Not Found"
 
-        log_msg = f"[{timestamp}] {gross_exp_log_part} | {pnl_log_part}"
+            # --- Build PnL Log Part ---
+            pnl_log_part = ""
+            if pnl_value is not None:
+                # ... (Normal and Stale logic for PnL remains the same)
+                if st.session_state.last_pnl_value is not None:
+                    delta = pnl_value - st.session_state.last_pnl_value
+                    pnl_log_part = f"PnL: {pnl_value:,} (Δ {delta:+,})"
+                    if abs(delta) > PNL_THRESHOLD:
+                        if (now - st.session_state.pnl_last_alert) > PNL_ALERT_COOLDOWN:
+                            if not isinstance(pnl_alert_sound, str): pnl_alert_sound.play()
+                            pnl_log_part += f" -> DELTA ALERT!"
+                            st.session_state.pnl_last_alert = now
+                        else: pnl_log_part += f" (Delta Cooldown)"
+                    if delta == 0:
+                        if st.session_state.pnl_stale_since == 0: st.session_state.pnl_stale_since = now
+                        elif not st.session_state.stale_pnl_alerted and (now - st.session_state.pnl_stale_since) > STALE_DURATION:
+                            if not isinstance(stale_pnl_sound, str): stale_pnl_sound.play()
+                            pnl_log_part += " (STALE!)"
+                            st.session_state.stale_pnl_alerted = True
+                    else:
+                        st.session_state.pnl_stale_since = 0
+                        st.session_state.stale_pnl_alerted = False
+                else:
+                    pnl_log_part = f"PnL: {pnl_value:,} (Tracking started)"
+                st.session_state.last_pnl_value = pnl_value
+            else:
+                pnl_log_part = "PnL: Not Found"
+                st.session_state.last_pnl_value = None
+
+            # --- NEW: UNIFIED "NOT FOUND" ALERT LOGIC ---
+            log_suffix = ""
+            if value is None or pnl_value is None:
+                if (now - st.session_state.parsing_last_alert) > NotFound_ALERT_COOLDOWN:
+                    if not isinstance(ocr_failed_sound, str):
+                        ocr_failed_sound.play()
+                    log_suffix = " -> PARSE ALERT!"
+                    st.session_state.parsing_last_alert = now
+                else:
+                    log_suffix = " (Parse Cooldown)"
+            else:
+                st.session_state.parsing_last_alert = 0 # Reset cooldown if both are found
+
+            log_msg = f"[{timestamp}] {gross_exp_log_part} | {pnl_log_part}{log_suffix}"
+
+        except OSError as e:
+            # ... (OSError handling remains the same)
+            log_msg = f"[{timestamp}] OCR FAILED. Please check."
+            if not isinstance(ocr_failed_sound, str):
+                ocr_failed_sound.play()
 
     if log_msg and (not st.session_state.gross_exp_log or st.session_state.gross_exp_log[-1] != log_msg):
         st.session_state.gross_exp_log.append(log_msg)

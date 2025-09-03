@@ -5,7 +5,9 @@
   "cooldown": {
     "high_touch_cooldown": 5,
     "halter_cooldown": 120,
-    "gross_exp_cooldown": 120
+    "gross_exp_cooldown": 120,
+    "delta_PnL_cooldown": 10,
+    "Not_Found_cooldown": 60
   },
   "exposure_threshold": {
     "stage1": 6000000,
@@ -15,10 +17,13 @@
   "PnL_threshold": {
     "delta_PnL": 2000
   },
+  "Stale_Duration": {
+    "Stale_Duration": 120
+  },
   "windows": {
     "halter_window_title": "Scalable_Quoting_Version_1.0",
     "gross_exp_window_title": "Scalable_Hedging_OCR",
-    "click_target_window_title": "Scalable_Hedging_Version_3.0 - Trading Manager <shared>"
+    "click_target_window_title": "Scalable_Hedging_Version_3.0"
   },
   "clicker": {
     "delay_between_clicks": 0.5
