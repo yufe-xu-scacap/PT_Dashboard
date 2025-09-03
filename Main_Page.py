@@ -9,12 +9,13 @@ import json
 import pyautogui
 import pytesseract
 from PIL import Image
-
+import platform
 # Imports for Click Automation
 import win32gui
-import win32api
 from pynput import mouse
-
+import tkinter as tk
+from tkinter import messagebox
+import ctypes
 
 def load_config(filepath="config.json"):
     """Loads the configuration from a JSON file."""
@@ -35,8 +36,8 @@ if not config:
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
-    page_title="Main Dashboard",
-    page_icon="📈💰📊",
+    page_title="PT Dashboard",
+    page_icon="data/icon.png",
     layout="wide"
 )
 
@@ -98,8 +99,94 @@ STALE_DURATION = config['Stale_Duration']['Stale_Duration']
 CLICKER_TARGET_WINDOW_TITLE = config['windows']['click_target_window_title']
 DELAY_BETWEEN_CLICKS = config['clicker']['delay_between_clicks']
 
-# --- HELPER FUNCTIONS ---
+# --- OCR FAILURE POP-UP FUNCTION ---
+def show_ocr_failed_popup():
+    """
+    Creates and shows a temporary, non-blocking pop-up window
+    to inform the user that OCR has failed.
+    The window closes automatically after 3 seconds.
+    """
+    try:
+        # Create a hidden root window
+        root = tk.Tk()
+        root.withdraw()
 
+        # Create a Toplevel window which acts as the pop-up
+        popup = tk.Toplevel(root)
+        popup.title("OCR Failure")
+
+        # Make the pop-up stay on top of other windows
+        popup.attributes("-topmost", True)
+
+        # The message to be displayed
+        message = (
+            "OCR failed to read values from the target window.\n"
+            "Please ensure the window is visible and not obstructed."
+        )
+
+        # Create a Label widget to show the message
+        label = tk.Label(popup, text=message, padx=20, pady=20)
+        label.pack()
+
+        # --- The Key Part ---
+        # Schedule the pop-up to be destroyed after 3000 milliseconds (3 seconds)
+        # You can change this value to make it stay longer or shorter.
+        popup.after(5000, popup.destroy)
+
+        # This will keep the root window alive long enough for the pop-up to show
+        # and then clean up after the pop-up is destroyed.
+        root.after(5100, root.destroy)
+
+        # This is needed to handle the pop-up events properly, but it doesn't block.
+        root.mainloop()
+
+    except Exception as e:
+        # This will log an error to the console if the GUI can't be displayed
+        print(f"Error showing pop-up: {e}")
+
+
+#this needed for stop OCR failed ouput when screen is locked
+def is_screen_locked():
+    """
+    Checks if the user's screen is locked using a more reliable method
+    by checking the active desktop name.
+    """
+    if platform.system() != "Windows":
+        return False  # Only implement for Windows
+
+    try:
+        user32 = ctypes.WinDLL('user32.dll')
+
+        # Open the desktop that is currently receiving user input
+        h_desktop = user32.OpenInputDesktop(0, False, 0x0001)
+
+        if not h_desktop:
+            return True
+
+        desktop_name_buffer = ctypes.create_unicode_buffer(256)
+        buffer_length = ctypes.c_ulong(ctypes.sizeof(desktop_name_buffer))
+
+        user32.GetUserObjectInformationW(
+            h_desktop,
+            2,  # UOI_NAME
+            ctypes.byref(desktop_name_buffer),
+            buffer_length,
+            ctypes.byref(buffer_length)
+        )
+
+        # Don't forget to close the handle
+        user32.CloseDesktop(h_desktop)
+
+        # Get the string value from the buffer
+        desktop_name = desktop_name_buffer.value.lower()
+
+        return desktop_name != "default"
+
+    except Exception as e:
+        print(f"Error checking screen lock status: {e}")
+        return False
+
+# --- HELPER FUNCTIONS ---
 @st.cache_resource
 def initialize_sounds(file_paths):
     """Initializes pygame and loads one or more sound files."""
@@ -269,17 +356,35 @@ st.divider()
 if not all(gross_exposure_sounds.values()):
     st.error("One or more Gross Exposure sound files failed to load. Check paths.")
 else:
-    col7, col8, col9 = st.columns([2, 3, 6])
+    # Adjusted columns to make space for the new select box
+    col7, col8, col9, col10 = st.columns([2, 1, 2, 6])
+
     with col7:
         run_gross_exp = st.toggle("Start Gross Exposure Monitoring", key="gross_exp_toggle")
+
     with col8:
-        if run_gross_exp: st.success("Status: Enabled")
-        else: st.error("Status: Disabled")
+        # NEW: Select box for choosing the alert type for OCR failures
+        st.selectbox(
+            "OCR Fail Alert Type",
+            ("Sound Alert", "Pop-up Window"),
+            key="ocr_alert_type",
+            help="Choose how to be notified if the app cannot read the window text."
+        )
+
     with col9:
+        if run_gross_exp:
+            st.success("Status: Enabled")
+        else:
+            st.error("Status: Disabled")
+
+    with col10:
         with st.expander("Gross Exposure Log", expanded=False):
-            st.info(f"Latest: {st.session_state.gross_exp_log[-1]}")
+            # To prevent an error if the log is empty on first run
+            if st.session_state.gross_exp_log:
+                st.info(f"Latest: {st.session_state.gross_exp_log[-1]}")
             log_container = st.container(height=200)
-            for msg in reversed(st.session_state.gross_exp_log): log_container.text(msg)
+            for msg in reversed(st.session_state.gross_exp_log):
+                log_container.text(msg)
 
 # --- 4. BACKGROUND CLICK SIMULATOR UI ---
 st.divider()
@@ -340,7 +445,6 @@ if run_high_touch and not isinstance(high_touch_sound, str):
         st.session_state.high_touch_log.append(log_msg)
 
 # 2. HALTER Logic
-# 2. HALTER Logic
 if run_halter and not isinstance(halter_sound, str):
     rect = find_window_by_title_substring(HALTER_WINDOW_TITLE)
     log_msg = ""
@@ -375,11 +479,11 @@ if run_halter and not isinstance(halter_sound, str):
 
 # 3. Gross Exposure Logic
 if run_gross_exp and all(gross_exposure_sounds.values()):
-
     rect = find_window_by_title_substring(GROSS_EXP_WINDOW_TITLE)
     log_msg = ""
+
     if not rect:
-        # ... (logic for window not found remains the same)
+        # This part remains the same: Window title was not found at all.
         log_msg = f"[{timestamp}] Window '{GROSS_EXP_WINDOW_TITLE}' not found."
         st.session_state.gross_exp_last_alert = 0
         st.session_state.last_pnl_value = None
@@ -388,15 +492,18 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
         st.session_state.pnl_stale_since = 0
     else:
         try:
-            text = extract_text_from_image(capture_screenshot(rect))
-            # Parse both values at the beginning
+            # Attempt to capture the screen and extract text
+            screenshot = capture_screenshot(rect)
+            text = extract_text_from_image(screenshot)
+
+            # Parse both values
             value = parse_gross_exposure_value(text)
             pnl_value = parse_PnL_value(text)
 
             # --- Build Gross Exp Log Part ---
             gross_exp_log_part = ""
             if value is not None:
-                # ... (Normal and Stale logic for Gross Exp remains the same)
+                # (Normal and Stale logic for Gross Exp remains the same)
                 gross_exp_log_part = f"Gross Exp: {value:,}"
                 alert_triggered = False
                 for threshold in sorted(gross_exposure_sounds.keys(), reverse=True):
@@ -414,7 +521,8 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
                     st.session_state.last_gross_exp_value = value
                     st.session_state.gross_exp_stale_since = now
                     st.session_state.stale_gross_exp_alerted = False
-                elif not st.session_state.stale_gross_exp_alerted and (now - st.session_state.gross_exp_stale_since) > STALE_DURATION:
+                elif not st.session_state.stale_gross_exp_alerted and (
+                        now - st.session_state.gross_exp_stale_since) > STALE_DURATION:
                     if not isinstance(stale_gross_exp_sound, str): stale_gross_exp_sound.play()
                     gross_exp_log_part += " (STALE!)"
                     st.session_state.stale_gross_exp_alerted = True
@@ -424,7 +532,7 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
             # --- Build PnL Log Part ---
             pnl_log_part = ""
             if pnl_value is not None:
-                # ... (Normal and Stale logic for PnL remains the same)
+                # (Normal and Stale logic for PnL remains the same)
                 if st.session_state.last_pnl_value is not None:
                     delta = pnl_value - st.session_state.last_pnl_value
                     pnl_log_part = f"PnL: {pnl_value:,} (Δ {delta:+,})"
@@ -433,10 +541,13 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
                             if not isinstance(pnl_alert_sound, str): pnl_alert_sound.play()
                             pnl_log_part += f" -> DELTA ALERT!"
                             st.session_state.pnl_last_alert = now
-                        else: pnl_log_part += f" (Delta Cooldown)"
+                        else:
+                            pnl_log_part += f" (Delta Cooldown)"
                     if delta == 0:
-                        if st.session_state.pnl_stale_since == 0: st.session_state.pnl_stale_since = now
-                        elif not st.session_state.stale_pnl_alerted and (now - st.session_state.pnl_stale_since) > STALE_DURATION:
+                        if st.session_state.pnl_stale_since == 0:
+                            st.session_state.pnl_stale_since = now
+                        elif not st.session_state.stale_pnl_alerted and (
+                                now - st.session_state.pnl_stale_since) > STALE_DURATION:
                             if not isinstance(stale_pnl_sound, str): stale_pnl_sound.play()
                             pnl_log_part += " (STALE!)"
                             st.session_state.stale_pnl_alerted = True
@@ -450,27 +561,45 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
                 pnl_log_part = "PnL: Not Found"
                 st.session_state.last_pnl_value = None
 
-            # --- NEW: UNIFIED "NOT FOUND" ALERT LOGIC ---
+            # --- UNIFIED PARSING FAILURE ALERT LOGIC ---
+                # --- UNIFIED PARSING FAILURE ALERT LOGIC ---
             log_suffix = ""
             if value is None or pnl_value is None:
-                if (now - st.session_state.parsing_last_alert) > NotFound_ALERT_COOLDOWN:
-                    if not isinstance(ocr_failed_sound, str):
-                        ocr_failed_sound.play()
+                # MODIFIED: Added 'and not is_screen_locked()' to the condition.
+                # The alert will now only trigger if the cooldown has passed AND the screen is not locked.
+                if (now - st.session_state.parsing_last_alert) > NotFound_ALERT_COOLDOWN and not is_screen_locked():
+
+                    # Conditional alert based on user's choice in the UI
+                    alert_preference = st.session_state.get("ocr_alert_type", "Sound Alert")
+
+                    if alert_preference == "Pop-up Window":
+                        show_ocr_failed_popup()
+                    else:  # Default to "Sound Alert"
+                        if not isinstance(ocr_failed_sound, str):
+                            ocr_failed_sound.play()
+
                     log_suffix = " -> PARSE ALERT!"
                     st.session_state.parsing_last_alert = now
+                elif is_screen_locked():
+                    # This is an optional addition for clearer logging.
+                    # It tells you that an alert was suppressed because the screen was locked.
+                    log_suffix = " (Parse Alert Suppressed - Screen Locked)"
                 else:
                     log_suffix = " (Parse Cooldown)"
             else:
-                st.session_state.parsing_last_alert = 0 # Reset cooldown if both are found
+                st.session_state.parsing_last_alert = 0  # Reset cooldown if both values are found
 
             log_msg = f"[{timestamp}] {gross_exp_log_part} | {pnl_log_part}{log_suffix}"
 
+        # --- NEW: DIFFERENTIATED EXCEPTION HANDLING ---
         except OSError as e:
-            # ... (OSError handling remains the same)
-            log_msg = f"[{timestamp}] OCR FAILED. Please check."
-            if not isinstance(ocr_failed_sound, str):
-                ocr_failed_sound.play()
+            # CHANGED: This now handles screen capture failures (minimized/locked screen).
+            # We log it, but we DON'T play an alert sound.
+            log_msg = f"[{timestamp}] Capture failed. Window might be minimized or screen locked."
+            # Note: We don't reset state here, so if the window becomes visible again,
+            # the stale logic will correctly resume.
 
+    # This logging logic remains the same
     if log_msg and (not st.session_state.gross_exp_log or st.session_state.gross_exp_log[-1] != log_msg):
         st.session_state.gross_exp_log.append(log_msg)
 

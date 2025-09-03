@@ -18,8 +18,8 @@ st.html("""
 st.logo("data/logo.png", size="large")
 
 st.set_page_config(
-    page_title="Mistrade Check & CSV Splitter",
-    page_icon="🔎",
+    page_title="PT Dashboard",
+    page_icon="data/icon.png",
     layout="wide"
 )
 

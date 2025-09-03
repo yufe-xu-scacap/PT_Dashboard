@@ -7,7 +7,6 @@ import io
 import re
 from bs4 import BeautifulSoup
 
-
 st.html("""
   <style>
     [alt=Logo] {
@@ -17,6 +16,11 @@ st.html("""
         """)
 st.logo("data/logo.png", size="large")
 
+st.set_page_config(
+    page_title="PT Dashboard",
+    page_icon="data/icon.png",
+    layout="wide"
+)
 # --- Helper Function for Downloading ---
 @st.cache_data
 def convert_df_to_csv(df: pd.DataFrame):

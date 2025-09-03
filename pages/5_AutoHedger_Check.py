@@ -19,7 +19,11 @@ st.html("""
 st.logo("data/logo.png", size="large")
 
 # --- Streamlit App Layout ---
-st.set_page_config(layout="wide")
+st.set_page_config(
+    page_title="PT Dashboard",
+    page_icon="data/icon.png",
+    layout="wide"
+)
 st.title('🛡️ Auto-Hedger Analysis')
 
 # --- State Initialization ---

@@ -14,8 +14,8 @@ st.logo("data/logo.png", size="large")
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="Spread Analysis",
-    page_icon="📊",
+    page_title="PT Dashboard",
+    page_icon="data/icon.png",
     layout="wide"
 )
 

@@ -22,7 +22,11 @@ st.html("""
   </style>
         """)
 st.logo("data/logo.png", size="large")
-st.set_page_config(layout="wide", page_title="Daily PnL Report Generation")
+st.set_page_config(
+    page_title="PT Dashboard",
+    page_icon="data/icon.png",
+    layout="wide"
+)
 st.title("📈 Daily PnL Report Generation")
 
 
