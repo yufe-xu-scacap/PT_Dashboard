@@ -172,7 +172,7 @@ def create_table_image(
 
     # Define default colors
     default_fill_color = 'white'
-    default_font_color = '#101112' # Dark grey
+    default_font_color = '#101112'  # Dark grey
 
     # Generate lists of colors for each row based on the styling rules
     row_fill_colors = [
@@ -212,6 +212,7 @@ def create_table_image(
         paper_bgcolor='white',
     )
     return pio.to_image(fig, format='png', width=width, height=height, scale=1.0)
+
 
 def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, df_date, width: int, height: int):
     """
@@ -423,6 +424,7 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
     )
     return pio.to_image(fig, format='png', width=width, height=height, scale=1)
 
+
 def create_turnover_plot(total_turnover_data, accepted_turnover_data, df_date, width: int, height: int):
     """
     Generates the Turnover Breakdown plot with a design consistent with the PnL chart.
@@ -496,28 +498,19 @@ def create_top_performers_plot(df_PnL, df_trades, df_Instrument, width: int, hei
     df_plot['Label'] = [f"{pnl:,.0f}€ (Turnover: {turnover:,.0f}€)" for pnl, turnover in
                         zip(df_plot['Total PnL (€)'], df_plot['Turnover (€)'])]
 
-    ### --- REMOVED --- ###
-    # We no longer need to truncate the names.
-    # df_plot['Security Name Short'] = ...
-    ### --- END REMOVED --- ###
-
-    ### --- NEW DYNAMIC MARGIN CALCULATION --- ###
+    # Dynamic Margin Calculation for long security names
     try:
-        # Find the length of the longest security name
         longest_name_length = df_plot['Security Name'].str.len().max()
-        # Calculate margin: base padding + (pixels per character * length)
-        # We estimate ~8 pixels per character for the font size used.
+        # Estimate ~8 pixels per character for the font size used.
         left_margin = 70 + (longest_name_length * 8)
     except (ValueError, TypeError):
-        # Fallback to a default margin if calculation fails (e.g., no data)
         left_margin = 250
-    ### --- END NEW --- ###
 
     colors = ['#6BDBCB' if pnl > 0 else '#F79880' for pnl in df_plot['Total PnL (€)']]
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df_plot['Abs_PnL'],
-        y=df_plot['Security Name'],  ### --- MODIFIED --- ### Use the original, full name for the Y-axis
+        y=df_plot['Security Name'],
         orientation='h',
         marker_color=colors,
         text=df_plot['Label'],
@@ -531,18 +524,146 @@ def create_top_performers_plot(df_PnL, df_trades, df_Instrument, width: int, hei
         title=dict(text='Top 10 Winners & Losers by PnL', y=0.95, x=0.5, xanchor='center', yanchor='top',
                    font=dict(size=24, color='#101112', family="Arial, sans-serif")), plot_bgcolor='white',
         paper_bgcolor='white', font=dict(family="Arial, sans-serif", color='#101112'),
-        ### --- MODIFIED --- ### Use the new dynamic left margin
         margin=dict(t=80, b=80, l=left_margin, r=40),
         showlegend=False,
-        xaxis=dict(title='Daily PnL (€)', range=[0, df_plot['Abs_PnL'].max() * 1.05], title_font=dict(size=22),
+        xaxis=dict(title='Daily PnL (€)', range=[0, df_plot['Abs_PnL'].max() * 1.15], title_font=dict(size=22),
                    tickfont=dict(size=20), tickformat=',.0f', showgrid=False, showline=True, linewidth=1,
                    linecolor='#101112', mirror=True),
         yaxis=dict(title='', type='category', tickfont=dict(size=16), showline=True, linewidth=1, linecolor='#101112',
                    mirror=True))
     return pio.to_image(fig, format='png', width=width, height=height, scale=1)
 
-### NEW ###
-def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date: datetime, total_instrument: int, log_list: List[str], log_placeholder, pnl_override: Optional[Dict[str, float]] = None):
+
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.io as pio
+
+def create_top_traded_plot(df_trades: pd.DataFrame, df_PnL: pd.DataFrame, df_Instrument: pd.DataFrame, width: int, height: int):
+    """
+    Generates a chart of the top 10 traded instruments, showing Turnover
+    as the main metric and PnL (from a separate DataFrame) in brackets.
+    """
+    # --- Robustness Check ---
+    if df_trades.empty or df_trades[df_trades['Portfolio'] == 'SCALMM'].empty:
+        fig = go.Figure()
+        fig.update_layout(
+            title_text='Top 10 Traded Instruments by RFQ Turnover',
+            xaxis={'visible': False}, yaxis={'visible': False},
+            annotations=[{
+                "text": "No Market Making trades found for the selected date.",
+                "xref": "paper", "yref": "paper",
+                "showarrow": False, "font": {"size": 20}
+            }]
+        )
+        return pio.to_image(fig, format='png', width=width, height=height, scale=1)
+
+    # 1. --- DATA PREPARATION ---
+    # Calculate Turnover from df_trades to find the top instruments
+    df_mm_trades = df_trades[df_trades['Portfolio'] == 'SCALMM'].copy()
+    rfq_cptys = ['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']
+    df_mm_trades['TradeType'] = np.where(df_mm_trades['Cpty'].isin(rfq_cptys), 'RFQ', 'Hedge')
+    df_mm_trades['AbsPremium'] = df_mm_trades['Premium'].abs()
+    df_turnover = df_mm_trades.pivot_table(
+        index='Instrument', columns='TradeType', values='AbsPremium', aggfunc='sum'
+    ).fillna(0)
+    if 'RFQ' not in df_turnover: df_turnover['RFQ'] = 0
+    if 'Hedge' not in df_turnover: df_turnover['Hedge'] = 0
+    df_turnover = df_turnover.rename(columns={'RFQ': 'RFQ_Turnover', 'Hedge': 'Hedge_Turnover'})
+
+    # Get the top 10 instruments based on RFQ turnover
+    df_top_10 = df_turnover.nlargest(10, 'RFQ_Turnover').reset_index()
+
+    # <-- CHANGED: Calculate PnL from the separate df_PnL DataFrame
+    # Based on your example, 'Unnamed: 0' in df_PnL holds the instrument ISIN.
+    pnl_per_instrument = df_PnL.groupby('Unnamed: 0')['BTPLD'].sum().rename('PnL')
+
+    # <-- CHANGED: Merge the external PnL data with our top 10 turnover data
+    # We use left_on='Instrument' and right_index=True because pnl_per_instrument is a Series
+    df_top_10 = pd.merge(df_top_10, pnl_per_instrument, left_on='Instrument', right_index=True, how='left')
+    df_top_10['PnL'] = df_top_10['PnL'].fillna(0) # Important: Handle cases with no matching PnL
+
+    # Merge with instrument details to get security names for labels
+    df_plot = pd.merge(df_top_10, df_Instrument, left_on='Instrument', right_on='ISIN', how='left')
+    df_plot['Label'] = df_plot['Name'].fillna(df_plot['Instrument'])
+    df_plot = df_plot.sort_values(by='RFQ_Turnover', ascending=False)
+
+    # Prepare labels and values for the plot
+    df_plot['RFQ_Turnover_M'] = df_plot['RFQ_Turnover'] / 1_000_000
+    df_plot['Hedge_Turnover_M'] = df_plot['Hedge_Turnover'] / 1_000_000
+    df_plot['Total_Turnover_M'] = df_plot['RFQ_Turnover_M'] + df_plot['Hedge_Turnover_M']
+
+    def format_pnl(pnl):
+        sign = "" if pnl >= 0 else "-"
+        pnl = abs(pnl)
+        if pnl >= 1_000_000: return f"{sign}{pnl/1_000_000:.2f}M"
+        if pnl >= 1_000: return f"{sign}{pnl/1_000:.1f}K"
+        return f"{sign}{pnl:.0f}"
+
+    df_plot['PnL_Formatted'] = df_plot['PnL'].apply(format_pnl)
+    df_plot['Total_Label'] = df_plot.apply(
+        lambda row: f"{row['Total_Turnover_M']:.2f}M (PnL: {row['PnL_Formatted']})", axis=1
+    )
+
+    # 2. --- PLOT CREATION ---
+    # (This section remains unchanged)
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=df_plot['Label'], y=df_plot['RFQ_Turnover_M'], name='Accepted RFQ Turnover',
+        marker_color='#6BDBCB', text=df_plot['RFQ_Turnover_M'], textposition='inside',
+        insidetextanchor='middle', texttemplate='%{text:.2f}M',
+        textfont=dict(size=18, color='#101112', family="Arial, sans-serif"),
+        hovertemplate='<b>%{x}</b><br>Accepted RFQ: %{customdata:,.0f} EUR<extra></extra>',
+        customdata=df_plot['RFQ_Turnover'].values
+    ))
+    fig.add_trace(go.Bar(
+        x=df_plot['Label'], y=df_plot['Hedge_Turnover_M'], name='Hedge Turnover',
+        marker_color='#a8d0ca', text=df_plot['Hedge_Turnover_M'], textposition='inside',
+        insidetextanchor='middle', texttemplate='%{text:.2f}M',
+        textfont=dict(size=18, color='#101112', family="Arial, sans-serif"),
+        hovertemplate='<b>%{x}</b><br>Hedge: %{customdata:,.0f} EUR<extra></extra>',
+        customdata=df_plot['Hedge_Turnover'].values
+    ))
+    fig.add_trace(go.Bar(
+        x=df_plot['Label'], y=[0] * len(df_plot),
+        text=df_plot['Total_Label'], textposition='outside', texttemplate='%{text}',
+        textfont=dict(size=18, color='#101112', family="Arial, sans-serif"),
+        cliponaxis=False, showlegend=False, hoverinfo='none'
+    ))
+
+    # 3. --- LAYOUT CONFIGURATION ---
+    # (This section remains unchanged)
+    fig.update_layout(
+        barmode='stack',
+        title=dict(
+            text='Top 10 Traded Instruments by RFQ Turnover',
+            y=0.95, x=0.5, xanchor='center', yanchor='top',
+            font=dict(size=24, color='#101112', family="Arial, sans-serif")
+        ),
+        plot_bgcolor='white', paper_bgcolor='white', hovermode='x unified',
+        font=dict(family="Arial, sans-serif", color='#101112'),
+        margin=dict(t=80, b=80, l=80, r=80),
+        legend=dict(
+            orientation="v", yanchor="top", y=0.98, xanchor="right", x=0.98,
+            font=dict(size=20), bgcolor='rgba(255,255,255,0.7)',
+            bordercolor='#EAEAEA', borderwidth=1
+        ),
+        xaxis=dict(
+            type='category', title_text='', tickfont=dict(size=16), showgrid=False,
+            showline=True, linewidth=1, linecolor='#101112', mirror=True, tickangle=45
+        ),
+        yaxis=dict(
+            title='Turnover (M EUR)', range=[0, df_plot['Total_Turnover_M'].max() * 1.15],
+            title_font=dict(size=22), tickfont=dict(size=20), showgrid=False,
+            showline=True, linewidth=1, linecolor='#101112', mirror=True
+        )
+    )
+
+    return pio.to_image(fig, format='png', width=width, height=height, scale=1)
+
+
+def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date: datetime, total_instrument: int,
+                               log_list: List[str], log_placeholder, pnl_override: Optional[Dict[str, float]] = None):
     """
     Takes the fetched report data, performs all calculations, and displays the results.
     Can optionally apply a PnL override for a specific ISIN.
@@ -552,6 +673,7 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         PNL_PLOT_WIDTH, PNL_PLOT_HEIGHT = 1600, 900
         TURNOVER_PLOT_WIDTH, TURNOVER_PLOT_HEIGHT = 1600, 900
         TOP_PERF_PLOT_WIDTH, TOP_PERF_PLOT_HEIGHT = 1600, 1000
+        TOP_TRADED_PLOT_WIDTH, TOP_TRADED_PLOT_HEIGHT = 1600, 1000  ### MODIFIED: Added dimensions for new plot
         PNL_TABLE_WIDTH, PNL_TABLE_HEIGHT = 720, 330
         TRADING_TABLE_WIDTH, TRADING_TABLE_HEIGHT = 720, 360
 
@@ -567,42 +689,31 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         df_trades = report_data.get("Trades")
         df_Instrument = pd.read_csv("data/Instrument list.csv")
 
-        # --- APPLY PNL OVERRIDE IF PROVIDED --- ### MODIFIED SECTION ###
+        # --- APPLY PNL OVERRIDE IF PROVIDED ---
         if pnl_override:
             isin_to_change = pnl_override.get("isin")
             new_pnl_value = pnl_override.get("pnl")
             if isin_to_change and new_pnl_value is not None:
-                # Find the original PnL to calculate the difference
                 original_pnl_row = report_data["ProfitandLoss"][
                     report_data["ProfitandLoss"]['Unnamed: 0'] == isin_to_change]
                 if not original_pnl_row.empty:
                     original_pnl_val = original_pnl_row['BTPLD'].iloc[0]
                     pnl_difference = new_pnl_value - original_pnl_val
-
-                    # --- Get indices to ensure safe modification ---
                     isin_index = df_PnL.index[df_PnL['Unnamed: 0'] == isin_to_change].tolist()
                     scalmm_index = df_PnL.index[df_PnL['Unnamed: 0'] == 'SCALMM'].tolist()
-
                     if isin_index and scalmm_index:
-                        # --- Apply change to the specific ISIN ---
-                        # Update Daily PnL to the new value
                         df_PnL.loc[isin_index[0], 'BTPLD'] = new_pnl_value
-                        # Update Monthly and Yearly PnL by the difference
-                        df_PnL.loc[isin_index[0], 'BTPLM'] += pnl_difference # Added this line
-                        df_PnL.loc[isin_index[0], 'BTPL'] += pnl_difference  # Added this line
-
-                        # --- Apply change to the SCALMM total row ---
+                        df_PnL.loc[isin_index[0], 'BTPLM'] += pnl_difference
+                        df_PnL.loc[isin_index[0], 'BTPL'] += pnl_difference
                         df_PnL.loc[scalmm_index[0], 'BTPLD'] += pnl_difference
-                        df_PnL.loc[scalmm_index[0], 'BTPLM'] += pnl_difference # Added this line
-                        df_PnL.loc[scalmm_index[0], 'BTPL'] += pnl_difference  # Added this line
-
+                        df_PnL.loc[scalmm_index[0], 'BTPLM'] += pnl_difference
+                        df_PnL.loc[scalmm_index[0], 'BTPL'] += pnl_difference
                         update_log(
                             f"Applied override: ISIN {isin_to_change} PnL changed. Daily, Monthly, and Yearly totals adjusted by {pnl_difference:,.2f}.",
                             log_list, log_placeholder, "INFO")
                 else:
                     update_log(f"Could not apply override: ISIN {isin_to_change} not found in PnL report.", log_list,
                                log_placeholder, "WARNING")
-        ### END OF MODIFIED SECTION ###
 
         # --- All calculations will now use the potentially modified df_PnL ---
         Daily_PnL_MM = round(df_PnL[df_PnL['Unnamed: 0'] == "SCALMM"]["BTPLD"].iloc[0])
@@ -619,11 +730,11 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         Total_Mtd_PnL_MM = round(
             df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALMM') & (df_PnL['Unnamed: 0'] != 'SCALMM'), 'BTPLM'].sum())
         Gross_Exposure_MM = round(df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALMM') & (
-                    df_PnL['Unnamed: 0'] != 'SCALMM'), 'Gross Exposure'].sum())
+                df_PnL['Unnamed: 0'] != 'SCALMM'), 'Gross Exposure'].sum())
         Net_Exposure_MM = round(
             df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALMM') & (df_PnL['Unnamed: 0'] != 'SCALMM'), 'BVal'].sum())
         Gross_Exposure_FR = round(df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALFRAC') & (
-                    df_PnL['Unnamed: 0'] != 'SCALFRAC'), 'Gross Exposure'].sum())
+                df_PnL['Unnamed: 0'] != 'SCALFRAC'), 'Gross Exposure'].sum())
         Net_Exposure_FR = round(
             df_PnL.loc[(df_PnL['Portfolio.Name'] == 'SCALFRAC') & (df_PnL['Unnamed: 0'] != 'SCALFRAC'), 'BVal'].sum())
 
@@ -651,26 +762,26 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
                 df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']))]['Premium'].abs().sum())
             buy_turnover_mm_total = df_trades[(df_trades['Portfolio'] == 'SCALMM') & (
                 df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction'])) & (
-                                                          df_trades['B/S'] == 'Buy')]['Premium'].abs().sum()
+                                                      df_trades['B/S'] == 'Buy')]['Premium'].abs().sum()
             trade_metrics[
                 'Accepted_RFQ_Buy_Turnover_MM'] = f"{buy_turnover_mm_total / trade_metrics['Accepted_RFQ_Turnover_MM']:.2%}" if \
-            trade_metrics['Accepted_RFQ_Turnover_MM'] > 0 else "0.00%"
+                trade_metrics['Accepted_RFQ_Turnover_MM'] > 0 else "0.00%"
             buy_turnover_fr_total = df_trades[(df_trades['Portfolio'] == 'SCALFRAC') & (
                 df_trades['Cpty'].isin(['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction'])) & (
-                                                          df_trades['B/S'] == 'Buy')]['Premium'].abs().sum()
+                                                      df_trades['B/S'] == 'Buy')]['Premium'].abs().sum()
             trade_metrics[
                 'Accepted_RFQ_Buy_Turnover_FR'] = f"{buy_turnover_fr_total / trade_metrics['Accepted_RFQ_Turnover_FR']:.2%}" if \
-            trade_metrics['Accepted_RFQ_Turnover_FR'] > 0 else "0.00%"
+                trade_metrics['Accepted_RFQ_Turnover_FR'] > 0 else "0.00%"
             trade_metrics['PnL_per_RFQ'] = round(
                 Daily_PnL_MM / trade_metrics['Orders_Filled_MM'] if trade_metrics['Orders_Filled_MM'] > 0 else 0, 2)
             trade_metrics[
                 'PnL_per_RFQ_Turnover'] = f"{round((Daily_PnL_MM / trade_metrics['Accepted_RFQ_Turnover_MM']) * 10000, 2)}bp" if \
-            trade_metrics['Accepted_RFQ_Turnover_MM'] > 0 else "0.00bp"
+                trade_metrics['Accepted_RFQ_Turnover_MM'] > 0 else "0.00bp"
             Estimated_Execution_Fees_MM = round(
                 (trade_metrics['Total_Turnover_MM'] - trade_metrics['Accepted_RFQ_Turnover_MM']) * 0.00007 * 2 / 3, 2)
             trade_metrics[
                 'Net_PnL_per_RFQ_Turnover'] = f"{round(((Daily_PnL_MM - Estimated_Execution_Fees_MM) / trade_metrics['Accepted_RFQ_Turnover_MM']) * 10000, 2)}bp" if \
-            trade_metrics['Accepted_RFQ_Turnover_MM'] > 0 else "0.00bp"
+                trade_metrics['Accepted_RFQ_Turnover_MM'] > 0 else "0.00bp"
 
         # --- Assemble Final DataFrames for display ---
         Statistics_data = [[trade_metrics['Orders_Filled_MM'], trade_metrics['Orders_Filled_FR']],
@@ -703,13 +814,10 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
                                              columns=['Market Making', 'Fractional'])
         df_Trading_Statistics.index.name = ""
         PnL_data = [f"{Daily_PnL_MM:,.0f}", f"{Daily_PnL_MA5:,.0f}",
-                    # f"{Daily_PnL_adj:,.0f}",
                     trade_metrics['PnL_per_RFQ'], trade_metrics['PnL_per_RFQ_Turnover'],
                     trade_metrics['Net_PnL_per_RFQ_Turnover'], f"{Total_Mtd_PnL_MM:,.0f}", f"{Total_Ytd_PnL_MM:,.0f}",
                     f"{Gross_Exposure_MM + Gross_Exposure_FR:,.0f}", f"{Net_Exposure_MM + Net_Exposure_FR:,.0f}"]
-        row_names_PnL = ['Daily PnL (€)', 'Daily PnL (MA5) (€)\uFE61',
-                         # 'Total Daily PnL (€) Adj',
-                         'PnL per RFQ (€)',
+        row_names_PnL = ['Daily PnL (€)', 'Daily PnL (MA5) (€)\uFE61', 'PnL per RFQ (€)',
                          'PnL per RFQ Turnover', 'Net PnL per RFQ Turnover', 'Total MtD PnL (€)', 'Total YtD PnL (€)',
                          'Gross Exposure (€)', 'Net Exposure (€)']
         df_PnL_Statistics = pd.DataFrame(data=PnL_data, index=row_names_PnL, columns=['Market Making'])
@@ -718,7 +826,6 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         # --- Chart Data Calculation ---
         update_log("Performing extended calculations for charts...", log_list, log_placeholder)
         xetr_cal = xcals.get_calendar("XETR")
-        # Use the report_date passed into the function, not the dataframe
         date_mapping_data = [{'Term': 'T-0', 'Date': report_date.strftime('%Y%m%d')}]
         prev_day_ts = pd.to_datetime(report_date)
         for i in range(1, 5):
@@ -735,7 +842,8 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
             term, df in historical_pnl.items()}
         daily_intraday_pnl = {'T-0': Daily_PnL_MM, 'T-1': Daily_PnL_t1, 'T-2': Daily_PnL_t2, 'T-3': Daily_PnL_t3,
                               'T-4': Daily_PnL_t4}
-        overnight_pnl_data = {f'T-{i}': (ytd_pnl[f'T-{i - 1}'] - ytd_pnl[f'T-{i}']) - daily_intraday_pnl[f'T-{i - 1}'] for i
+        overnight_pnl_data = {f'T-{i}': (ytd_pnl[f'T-{i - 1}'] - ytd_pnl[f'T-{i}']) - daily_intraday_pnl[f'T-{i - 1}']
+                              for i
                               in range(1, 5)}
 
         historical_trades_early = {f'T-{i}': report_data.get(f'Trades_T-{i}') for i in range(1, 5)}
@@ -767,13 +875,11 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         st.info(
             "You can right-click on any chart or table below and select 'Copy Image' to paste it in your report mail.")
 
-        # --- NEW: Define styles for the PnL table ---
         pnl_row_styles = {
             'PnL per RFQ Turnover': {'fill_color': 'rgb(64, 64, 65)', 'font_color': 'white'},
             'Net PnL per RFQ Turnover': {'fill_color': 'rgb(64, 64, 65)', 'font_color': 'white'}
         }
 
-        # --- MODIFIED: Pass the new styles dictionary to the function call ---
         pnl_table_png = create_table_image(df=df_PnL_Statistics,
                                            width=PNL_TABLE_WIDTH,
                                            height=PNL_TABLE_HEIGHT,
@@ -781,16 +887,15 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
                                            table_width_fraction=0.75,
                                            align_header=['left', 'right'],
                                            align_cells=['left', 'right'],
-                                           row_styles=pnl_row_styles)  # <-- Pass the styles here
+                                           row_styles=pnl_row_styles)
         st.image(pnl_table_png, caption="")
 
-        # --- The rest of your code remains the same ---
         trading_table_png = create_table_image(df=df_Trading_Statistics,
                                                width=TRADING_TABLE_WIDTH,
                                                height=TRADING_TABLE_HEIGHT,
                                                col_widths=[2, 1, 1],
                                                align_header=['left', 'right', 'right'],
-                                               align_cells=['left', 'right', 'right'])  # No styles passed here
+                                               align_cells=['left', 'right', 'right'])
         st.image(trading_table_png, caption="")
         pnl_plot_png = create_pnl_plot(daily_intraday_pnl, overnight_pnl_data, win_rate_data, df_pnl_turnover, df_date,
                                        width=PNL_PLOT_WIDTH, height=PNL_PLOT_HEIGHT)
@@ -809,6 +914,16 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
             top_performers_plot_png = create_top_performers_plot(df_PnL, df_trades, df_Instrument,
                                                                  width=TOP_PERF_PLOT_WIDTH, height=TOP_PERF_PLOT_HEIGHT)
             st.image(top_performers_plot_png, caption="Top 10 Winners & Losers by PnL")
+
+            ### --- MODIFIED: CALL AND DISPLAY THE NEW PLOT --- ###
+            # New, correct call
+            top_traded_plot_png = create_top_traded_plot(df_trades,
+                                                         df_PnL,  # <-- Add the PnL DataFrame as the second argument
+                                                         df_Instrument,
+                                                         width=TOP_TRADED_PLOT_WIDTH, height=TOP_TRADED_PLOT_HEIGHT)
+            st.image(top_traded_plot_png, caption="Top 10 Most Traded Instruments by RFQ Volume")
+            ### --- END MODIFICATION --- ###
+
         else:
             st.warning(
                 "One or more historical Trades reports were not found, so Turnover and Top Performer charts cannot be generated.")
@@ -817,14 +932,14 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
 
     except FileNotFoundError:
         update_log("Error: 'Instrument list.csv' not found. Cannot generate plots.", log_list, log_placeholder, "ERROR")
-        st.error("Error: 'Instrument list.csv' not found. Please ensure the file is in the same directory.")
+        st.error("Error: 'Instrument list.csv' not found. Please ensure the file is in the 'data' directory.")
     except Exception as e:
         st.error(f"An unexpected error occurred during report processing: {e}")
         st.exception(e)
         update_log(f"An unexpected error occurred: {e}", log_list, log_placeholder, "ERROR")
 
 
-# --- Main Application State --- ### MODIFIED ###
+# --- Main Application State ---
 if 'log_messages' not in st.session_state:
     st.session_state.log_messages = []
 if 'report_data' not in st.session_state:
@@ -836,7 +951,8 @@ if 'pnl_override' not in st.session_state:
 st.subheader("Report Parameters")
 col1, col2, col3 = st.columns([3, 1.5, 1.5])
 with col1:
-    bearer_token = st.text_input("Enter Bearer Token", type="password", help="https://franz.agent-tool.scalable.capital/misc/s3-access/prod-market-making_trade-reports_scalable-fis?bucketPath=fis%2F")
+    bearer_token = st.text_input("Enter Bearer Token", type="password",
+                                 help="https://franz.agent-tool.scalable.capital/misc/s3-access/prod-market-making_trade-reports_scalable-fis?bucketPath=fis%2F")
 with col2:
     report_date = st.date_input("Select Report Date", value=datetime.now(ZoneInfo("Europe/Berlin")))
 with col3:
@@ -847,7 +963,7 @@ st.write("")
 generate_button = st.button("Generate Report", type="primary", use_container_width=True)
 st.divider()
 
-# --- Main Application Logic --- ### MODIFIED ###
+# --- Main Application Logic ---
 log_expander = st.expander("Activity Log", expanded=True)
 log_placeholder = log_expander.empty()
 
@@ -856,13 +972,11 @@ if generate_button:
         st.error("Please enter your Bearer Token.")
     else:
         st.session_state.log_messages.clear()
-        st.session_state.pnl_override = None  # Clear any previous overrides
+        st.session_state.pnl_override = None
         with st.spinner("Fetching report data... This may take a few minutes. ⏳"):
             date_str = report_date.strftime("%Y%m%d")
             st.session_state.report_data = get_reports(date_str, bearer_token, st.session_state.log_messages,
                                                        log_placeholder)
-
-            # Check for essential data after fetching
             required_pnl_dfs = ["ProfitandLoss", "ProfitandLoss_T-1", "ProfitandLoss_T-2", "ProfitandLoss_T-3",
                                 "ProfitandLoss_T-4", "ProfitandLoss_T-5"]
             if st.session_state.report_data:
@@ -870,25 +984,22 @@ if generate_button:
                 if missing_dfs:
                     update_log(f"FATAL: Could not retrieve essential reports: {', '.join(missing_dfs)}.",
                                st.session_state.log_messages, log_placeholder, "ERROR")
-                    st.session_state.report_data = None  # Invalidate data if essential parts are missing
+                    st.session_state.report_data = None
 
-# --- Report Display Area --- ### MODIFIED ###
+# --- Report Display Area ---
 if st.session_state.report_data:
-    # Call the main function to process and display the report
     process_and_display_report(
         st.session_state.report_data,
-        report_date,  # <--- Add this
+        report_date,
         total_instrument,
         st.session_state.log_messages,
         log_placeholder,
         pnl_override=st.session_state.pnl_override
     )
 
-    # --- NEW UI for PnL Adjustment --- ### NEW ###
+    # --- UI for PnL Adjustment ---
     st.divider()
-
     st.subheader("⚙️ Adjust PnL and Re-Generate")
-
     df_trades_today = st.session_state.report_data.get("Trades")
     df_pnl_original = st.session_state.report_data.get("ProfitandLoss")
 
@@ -899,16 +1010,14 @@ if st.session_state.report_data:
         else:
             col_adj1, col_adj2, col_adj3 = st.columns([2.5, 2, 2.5])
             with col_adj1:
-                # Add a placeholder (None) which creates a blank default option
                 selected_isin = st.selectbox(
                     "Select ISIN to Adjust",
-                    options=[None] + traded_isins,  # Add None to the start of the list
-                    format_func=lambda x: '— Select an ISIN —' if x is None else x,  # Display text for None
+                    options=[None] + traded_isins,
+                    format_func=lambda x: '— Select an ISIN —' if x is None else x,
                     help="Select an ISIN from today's trades to modify its PnL.",
                     key='selected_isin_for_adj'
                 )
 
-            # Only show the next widgets if a valid ISIN has been selected
             if selected_isin:
                 with col_adj2:
                     default_pnl = 0.0
@@ -918,12 +1027,11 @@ if st.session_state.report_data:
 
                     new_pnl = st.number_input(
                         f"New Daily PnL for {selected_isin}",
-                        key=f"pnl_input_{selected_isin}",  # Use a dynamic key
+                        key=f"pnl_input_{selected_isin}",
                         value=default_pnl,
                         format="%.2f"
                     )
                 with col_adj3:
-                    # Add empty space to push the button down for better alignment
                     st.write("")
                     st.write("")
                     if st.button("Change and Re-Generate Report", use_container_width=True):
@@ -936,9 +1044,8 @@ if st.session_state.report_data:
         st.warning("Cannot display adjustment controls because Trades or PnL data for T-0 is missing.")
 
 # Always update the log display at the end of every script run
-update_log("Updated with latest input...", st.session_state.log_messages, log_placeholder)
-
-# Show initial message if the app has just started
-if not st.session_state.log_messages:
+if st.session_state.log_messages:
+    update_log("UI updated.", st.session_state.log_messages, log_placeholder)
+else:
     update_log("Enter parameters above and click 'Generate Report' to start.", st.session_state.log_messages,
                log_placeholder)
