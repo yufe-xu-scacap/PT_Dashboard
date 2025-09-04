@@ -533,33 +533,14 @@ def create_top_performers_plot(df_PnL, df_trades, df_Instrument, width: int, hei
                    mirror=True))
     return pio.to_image(fig, format='png', width=width, height=height, scale=1)
 
-
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-import plotly.io as pio
-
-def create_top_traded_plot(df_trades: pd.DataFrame, df_PnL: pd.DataFrame, df_Instrument: pd.DataFrame, width: int, height: int):
+def create_top_traded_plot(df_trades: pd.DataFrame, df_PnL: pd.DataFrame, df_Instrument: pd.DataFrame, width: int,
+                           height: int):
     """
-    Generates a chart of the top 10 traded instruments, showing Turnover
-    as the main metric and PnL (from a separate DataFrame) in brackets.
+    Generates a HORIZONTAL chart. Total labels are now annotations and are
+    conditionally shifted to prevent overlap with small bar segments.
+    The PnL is displayed in basis points (bps) relative to RFQ Turnover.
     """
-    # --- Robustness Check ---
-    if df_trades.empty or df_trades[df_trades['Portfolio'] == 'SCALMM'].empty:
-        fig = go.Figure()
-        fig.update_layout(
-            title_text='Top 10 Traded Instruments by RFQ Turnover',
-            xaxis={'visible': False}, yaxis={'visible': False},
-            annotations=[{
-                "text": "No Market Making trades found for the selected date.",
-                "xref": "paper", "yref": "paper",
-                "showarrow": False, "font": {"size": 20}
-            }]
-        )
-        return pio.to_image(fig, format='png', width=width, height=height, scale=1)
-
     # 1. --- DATA PREPARATION ---
-    # Calculate Turnover from df_trades to find the top instruments
     df_mm_trades = df_trades[df_trades['Portfolio'] == 'SCALMM'].copy()
     rfq_cptys = ['CLIENTALLOCATION', 'LOMSCALOFPS', 'CorpAction']
     df_mm_trades['TradeType'] = np.where(df_mm_trades['Cpty'].isin(rfq_cptys), 'RFQ', 'Hedge')
@@ -571,90 +552,108 @@ def create_top_traded_plot(df_trades: pd.DataFrame, df_PnL: pd.DataFrame, df_Ins
     if 'Hedge' not in df_turnover: df_turnover['Hedge'] = 0
     df_turnover = df_turnover.rename(columns={'RFQ': 'RFQ_Turnover', 'Hedge': 'Hedge_Turnover'})
 
-    # Get the top 10 instruments based on RFQ turnover
     df_top_10 = df_turnover.nlargest(10, 'RFQ_Turnover').reset_index()
-
-    # <-- CHANGED: Calculate PnL from the separate df_PnL DataFrame
-    # Based on your example, 'Unnamed: 0' in df_PnL holds the instrument ISIN.
     pnl_per_instrument = df_PnL.groupby('Unnamed: 0')['BTPLD'].sum().rename('PnL')
-
-    # <-- CHANGED: Merge the external PnL data with our top 10 turnover data
-    # We use left_on='Instrument' and right_index=True because pnl_per_instrument is a Series
     df_top_10 = pd.merge(df_top_10, pnl_per_instrument, left_on='Instrument', right_index=True, how='left')
-    df_top_10['PnL'] = df_top_10['PnL'].fillna(0) # Important: Handle cases with no matching PnL
+    df_top_10['PnL'] = df_top_10['PnL'].fillna(0)
 
-    # Merge with instrument details to get security names for labels
     df_plot = pd.merge(df_top_10, df_Instrument, left_on='Instrument', right_on='ISIN', how='left')
     df_plot['Label'] = df_plot['Name'].fillna(df_plot['Instrument'])
-    df_plot = df_plot.sort_values(by='RFQ_Turnover', ascending=False)
+    df_plot = df_plot.sort_values(by='RFQ_Turnover', ascending=True)
 
-    # Prepare labels and values for the plot
+    try:
+        longest_name_length = df_plot['Label'].str.len().max()
+        left_margin = 70 + (longest_name_length * 8)
+    except (ValueError, TypeError):
+        left_margin = 250
+
     df_plot['RFQ_Turnover_M'] = df_plot['RFQ_Turnover'] / 1_000_000
     df_plot['Hedge_Turnover_M'] = df_plot['Hedge_Turnover'] / 1_000_000
     df_plot['Total_Turnover_M'] = df_plot['RFQ_Turnover_M'] + df_plot['Hedge_Turnover_M']
 
-    def format_pnl(pnl):
-        sign = "" if pnl >= 0 else "-"
-        pnl = abs(pnl)
-        if pnl >= 1_000_000: return f"{sign}{pnl/1_000_000:.2f}M"
-        if pnl >= 1_000: return f"{sign}{pnl/1_000:.1f}K"
-        return f"{sign}{pnl:.0f}"
-
-    df_plot['PnL_Formatted'] = df_plot['PnL'].apply(format_pnl)
-    df_plot['Total_Label'] = df_plot.apply(
-        lambda row: f"{row['Total_Turnover_M']:.2f}M (PnL: {row['PnL_Formatted']})", axis=1
+    # <-- CHANGED: Calculate PnL in basis points (bps) -->
+    # We use np.where to avoid division by zero if RFQ_Turnover is 0
+    df_plot['PnL_bps'] = np.where(
+        df_plot['RFQ_Turnover'] != 0,
+        (df_plot['PnL'] / df_plot['RFQ_Turnover']) * 10000,
+        0
     )
 
+    # The 'format_pnl' function and 'PnL_Formatted' column are no longer needed
+
     # 2. --- PLOT CREATION ---
-    # (This section remains unchanged)
     fig = go.Figure()
+    # Add RFQ and Hedge bars (these are unchanged)
     fig.add_trace(go.Bar(
-        x=df_plot['Label'], y=df_plot['RFQ_Turnover_M'], name='Accepted RFQ Turnover',
-        marker_color='#6BDBCB', text=df_plot['RFQ_Turnover_M'], textposition='inside',
-        insidetextanchor='middle', texttemplate='%{text:.2f}M',
+        x=df_plot['RFQ_Turnover_M'], y=df_plot['Label'], orientation='h',
+        name='Accepted RFQ Turnover', marker_color='#6BDBCB', text=df_plot['RFQ_Turnover_M'],
+        textposition='inside', insidetextanchor='middle', texttemplate='%{text:.2f}M',
+        textangle=0, constraintext='none',
         textfont=dict(size=18, color='#101112', family="Arial, sans-serif"),
-        hovertemplate='<b>%{x}</b><br>Accepted RFQ: %{customdata:,.0f} EUR<extra></extra>',
+        hovertemplate='<b>%{y}</b><br>Accepted RFQ: %{customdata:,.0f} EUR<extra></extra>',
         customdata=df_plot['RFQ_Turnover'].values
     ))
     fig.add_trace(go.Bar(
-        x=df_plot['Label'], y=df_plot['Hedge_Turnover_M'], name='Hedge Turnover',
-        marker_color='#a8d0ca', text=df_plot['Hedge_Turnover_M'], textposition='inside',
-        insidetextanchor='middle', texttemplate='%{text:.2f}M',
+        x=df_plot['Hedge_Turnover_M'], y=df_plot['Label'], orientation='h',
+        name='Hedge Turnover', marker_color='#a8d0ca', text=df_plot['Hedge_Turnover_M'],
+        textposition='inside', insidetextanchor='middle', texttemplate='%{text:.2f}M',
+        textangle=0, constraintext='none',
         textfont=dict(size=18, color='#101112', family="Arial, sans-serif"),
-        hovertemplate='<b>%{x}</b><br>Hedge: %{customdata:,.0f} EUR<extra></extra>',
+        hovertemplate='<b>%{y}</b><br>Hedge: %{customdata:,.0f} EUR<extra></extra>',
         customdata=df_plot['Hedge_Turnover'].values
     ))
-    fig.add_trace(go.Bar(
-        x=df_plot['Label'], y=[0] * len(df_plot),
-        text=df_plot['Total_Label'], textposition='outside', texttemplate='%{text}',
-        textfont=dict(size=18, color='#101112', family="Arial, sans-serif"),
-        cliponaxis=False, showlegend=False, hoverinfo='none'
-    ))
+
+    # Create a list of annotations for the total labels
+    annotations = []
+    for index, row in df_plot.iterrows():
+        # <-- CHANGED: Update the label text to use PnL in bps -->
+        total_label_text = f"{row['Total_Turnover_M']:.2f}M (PnL: {row['PnL_bps']:.1f} bps)"
+
+        # Default position is at the end of the bar
+        x_position = row['Total_Turnover_M']
+
+        # Condition: If hedge turnover is present but very small (e.g., <8% of total)
+        is_small_hedge = 0 < row['Hedge_Turnover_M'] < (row['Total_Turnover_M'] * 0.08)
+
+        if is_small_hedge:
+            # Add a small offset to the x_position to push the label right
+            offset = df_plot['Total_Turnover_M'].max() * 0.015
+            x_position += offset
+
+        annotations.append(dict(
+            x=x_position,
+            y=row['Label'],
+            text=total_label_text,
+            showarrow=False,
+            xanchor='left',
+            font=dict(size=18, color='#101112', family="Arial, sans-serif")
+        ))
 
     # 3. --- LAYOUT CONFIGURATION ---
-    # (This section remains unchanged)
     fig.update_layout(
+        annotations=annotations,
         barmode='stack',
         title=dict(
             text='Top 10 Traded Instruments by RFQ Turnover',
             y=0.95, x=0.5, xanchor='center', yanchor='top',
             font=dict(size=24, color='#101112', family="Arial, sans-serif")
         ),
-        plot_bgcolor='white', paper_bgcolor='white', hovermode='x unified',
+        plot_bgcolor='white', paper_bgcolor='white', hovermode='y unified',
         font=dict(family="Arial, sans-serif", color='#101112'),
-        margin=dict(t=80, b=80, l=80, r=80),
+        margin=dict(t=80, b=80, l=left_margin, r=80),
         legend=dict(
-            orientation="v", yanchor="top", y=0.98, xanchor="right", x=0.98,
+            orientation="v", yanchor="bottom", y=0.02,
+            xanchor="right", x=0.98,
             font=dict(size=20), bgcolor='rgba(255,255,255,0.7)',
             bordercolor='#EAEAEA', borderwidth=1
         ),
         xaxis=dict(
-            type='category', title_text='', tickfont=dict(size=16), showgrid=False,
-            showline=True, linewidth=1, linecolor='#101112', mirror=True, tickangle=45
+            title='Turnover (M EUR)', range=[0, df_plot['Total_Turnover_M'].max() * 1.2],
+            title_font=dict(size=22), tickfont=dict(size=20), showgrid=False,
+            showline=True, linewidth=1, linecolor='#101112', mirror=True
         ),
         yaxis=dict(
-            title='Turnover (M EUR)', range=[0, df_plot['Total_Turnover_M'].max() * 1.15],
-            title_font=dict(size=22), tickfont=dict(size=20), showgrid=False,
+            type='category', title_text='', tickfont=dict(size=16), showgrid=False,
             showline=True, linewidth=1, linecolor='#101112', mirror=True
         )
     )

@@ -664,6 +664,23 @@ elif not st.session_state.is_running and 'click_run_toggle' in st.session_state:
     status_placeholder.empty()
 
 # --- MASTER RERUN CONTROLLER ---
+# following code ensures the app reruns at consistent intervals (the alert will play at same time on different PC)
 if run_high_touch or run_halter or run_gross_exp:
-    time.sleep(CHECK_INTERVAL)
+    # --- Synchronization Logic ---
+    # Get the current time, including microseconds for better precision.
+    now = datetime.now()
+
+    # Calculate how many seconds have passed since the last interval mark.
+    # For example, if it's 12.3 seconds past the minute and CHECK_INTERVAL is 5,
+    # the remainder of (12.3 / 5) is 2.3.
+    seconds_past_interval = (now.second + now.microsecond / 1_000_000) % CHECK_INTERVAL
+
+    # Calculate the delay needed to reach the *next* interval mark.
+    # Continuing the example: 5 - 2.3 = 2.7. So, we wait 2.7 seconds to hit the 15-second mark.
+    wait_time = CHECK_INTERVAL - seconds_past_interval
+
+    # Sleep for the calculated duration.
+    time.sleep(wait_time)
+
+    # Rerun the Streamlit app, which will now start closer to the desired time.
     st.rerun()
