@@ -5,7 +5,6 @@ import time
 from datetime import datetime
 import re
 import json
-# Imports for OCR alerts
 import pyautogui
 import pytesseract
 from PIL import Image
@@ -16,6 +15,9 @@ from pynput import mouse
 import tkinter as tk
 from tkinter import messagebox
 import ctypes
+import streamlit as st
+import pygame
+import multiprocessing
 
 def load_config(filepath="config.json"):
     """Loads the configuration from a JSON file."""
@@ -244,6 +246,24 @@ def parse_PnL_value(text):
 # --- Click Automation Helper Functions ---
 mouse_controller = mouse.Controller()
 
+# NEW FUNCTION FOR THE BACKGROUND PROCESS
+def clicker_process_target(window_title, click_points, delay_between, full_interval):
+    """
+    This function is the target for the background process.
+    It runs an infinite loop to perform clicks.
+    """
+    while True:
+        hwnd = find_exact_window(window_title)
+        if hwnd:
+            # This loop performs the sequence of clicks
+            for point in click_points:
+                perform_realistic_click(hwnd, point['coords'][0], point['coords'][1], point['type'])
+                time.sleep(delay_between)
+
+        # Wait for the full interval before starting the next sequence
+        time.sleep(full_interval)
+
+
 def find_exact_window(title_part):
     """Finds the window handle for a title containing the given substring."""
     def callback(hwnd, hwnds):
@@ -302,6 +322,7 @@ if 'gross_exp_stale_since' not in st.session_state: st.session_state.gross_exp_s
 if 'stale_gross_exp_alerted' not in st.session_state: st.session_state.stale_gross_exp_alerted = False
 if 'pnl_stale_since' not in st.session_state: st.session_state.pnl_stale_since = 0
 if 'stale_pnl_alerted' not in st.session_state: st.session_state.stale_pnl_alerted = False
+if 'clicker_process' not in st.session_state: st.session_state.clicker_process = None
 
 # --- MAIN PAGE LAYOUT ---
 st.title("PT Dashboard")
@@ -604,28 +625,79 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
         st.session_state.gross_exp_log.append(log_msg)
 
 # 4. Click Automation Logic
-if st.session_state.is_running and not st.session_state.click_points:
-    st.session_state.capture_mode = True
+if st.session_state.get('click_run_toggle'):
+    # This block runs when the toggle is ON
+    if st.session_state.clicker_process is not None:
+        # If the process is running, calculate and show the countdown
+        now = time.time()
+
+        # Check if the timer needs to be reset for the next interval
+        if now > st.session_state.next_click_time:
+            st.session_state.next_click_time = now + click_interval
+
+        time_left = round(st.session_state.next_click_time - now)
+
+        if time_left > 0:
+            status_placeholder.info(f"Clicker is active. Next sequence in ~{time_left} seconds...")
+        else:
+            status_placeholder.info("Clicker is active. Executing click sequence...")
+
+    else:  # This runs when the toggle has just been switched ON
+        if not st.session_state.click_points:
+            status_placeholder.warning("ACTION REQUIRED: You must define the click points first!")
+            # This will trigger the capture_mode logic in Part 2
+            st.session_state.capture_mode = True
+        else:
+            status_placeholder.info("Starting clicker process...")
+            process = multiprocessing.Process(
+                target=clicker_process_target,
+                args=(CLICKER_TARGET_WINDOW_TITLE, st.session_state.click_points, DELAY_BETWEEN_CLICKS, click_interval),
+                daemon=True
+            )
+            process.start()
+            st.session_state.clicker_process = process
+            # Set the initial timer for the countdown display
+            st.session_state.next_click_time = time.time() + click_interval
+            st.session_state.click_log.append(f"[{timestamp}] Clicker process started.")
+            st.rerun()
+
+else:
+    # This block runs when the toggle is switched OFF
+    if st.session_state.clicker_process is not None:
+        status_placeholder.info("Stopping clicker process...")
+        st.session_state.clicker_process.terminate()
+        st.session_state.clicker_process = None
+        st.session_state.click_log.append(f"[{timestamp}] Clicker process stopped.")
+        status_placeholder.empty()
+        st.rerun()
 
 if st.session_state.capture_mode:
     hwnd = find_exact_window(CLICKER_TARGET_WINDOW_TITLE)
     if not hwnd:
         st.error(f"Target window '{CLICKER_TARGET_WINDOW_TITLE}' not found for click setup.")
-        st.session_state.is_running = False
+        st.session_state.is_running = False  # Turn off the toggle
+        st.session_state.capture_mode = False
         st.rerun()
     else:
         status_placeholder.warning("ACTION REQUIRED: Define the click sequence in the target window.")
-        st.write("1. **Right-click** at the first location. 2. **Right-click** at the second. 3. **Right-click** at the third.")
+        st.write(
+            "1. **Right-click** at the first location. 2. **Right-click** at the second. 3. **Right-click** at the third.")
 
         captured_points = []
-        click_definitions = [("Right Click", "right"), ("Right Click", "right"), ("Right Click", "right")]
+
+
+        # Simplified the click definitions as per your original code's behavior
         def on_click(x, y, button, pressed):
-            if pressed:
-                point_index = len(captured_points)
-                _, defined_type = click_definitions[point_index]
+            # We only care about the press event, not the release
+            if pressed and button == mouse.Button.right:
                 client_coords = win32gui.ScreenToClient(hwnd, (x, y))
-                captured_points.append({'coords': client_coords, 'type': defined_type})
-                if len(captured_points) == 3: return False
+                captured_points.append({'coords': client_coords, 'type': 'right'})
+
+                # Stop listening after 3 points are captured
+                if len(captured_points) == 3:
+                    return False
+
+
         with mouse.Listener(on_click=on_click) as listener:
             listener.join()
 
@@ -635,33 +707,6 @@ if st.session_state.capture_mode:
         st.session_state.click_log.append("Click points defined and saved.")
         time.sleep(2)
         st.rerun()
-
-if st.session_state.is_running and st.session_state.click_points:
-    hwnd = find_exact_window(CLICKER_TARGET_WINDOW_TITLE)
-    if not hwnd:
-        status_placeholder.error(f"Window '{CLICKER_TARGET_WINDOW_TITLE}' not found. Stopping.")
-        st.session_state.is_running = False
-        time.sleep(2)
-        st.rerun()
-    else:
-        status_placeholder.info("Running click sequence...")
-        original_foreground_hwnd = win32gui.GetForegroundWindow()
-        for point in st.session_state.click_points:
-            perform_realistic_click(hwnd, point['coords'][0], point['coords'][1], point['type'])
-            time.sleep(DELAY_BETWEEN_CLICKS)
-        if win32gui.IsWindow(original_foreground_hwnd):
-            try: win32gui.SetForegroundWindow(original_foreground_hwnd)
-            except Exception: pass
-        st.session_state.click_log.append("Sequence complete. Waiting...")
-        status_placeholder.text(f"Next sequence in {click_interval} seconds...")
-        progress_bar = progress_placeholder.progress(0)
-        for i in range(100):
-            time.sleep(click_interval / 100)
-            progress_bar.progress(i + 1)
-        progress_placeholder.empty()
-        st.rerun()
-elif not st.session_state.is_running and 'click_run_toggle' in st.session_state:
-    status_placeholder.empty()
 
 # --- MASTER RERUN CONTROLLER ---
 # following code ensures the app reruns at consistent intervals (the alert will play at same time on different PC)
