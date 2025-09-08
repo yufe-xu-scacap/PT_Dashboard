@@ -395,7 +395,7 @@ if isinstance(halter_sound, str):
 else:
     col4, col5, col6 = st.columns([2, 3, 6])
     with col4:
-        run_halter = st.toggle("Start HALTER Monitoring", key="halter_toggle")
+        run_halter = st.toggle("Start HALT ERROR Monitoring", key="halter_toggle")
     with col5:
         if run_halter: st.success("Status: Enabled")
         else: st.error("Status: Disabled")
@@ -522,11 +522,14 @@ if run_halter and not isinstance(halter_sound, str):
                 log_msg = f"[{timestamp}] HALTER check complete. No errors."
                 st.session_state.halter_last_alert = 0
 
+
         except OSError as e:
-            # This runs ONLY if the screenshot fails
-            log_msg = f"[{timestamp}] OCR FAILED. Please check."
-            if not isinstance(ocr_failed_sound, str):
-                ocr_failed_sound.play()  # Play the custom error sound
+            if not is_screen_locked():
+                log_msg = f"[{timestamp}] OCR FAILED. Please check."
+                if not isinstance(ocr_failed_sound, str):
+                    ocr_failed_sound.play()
+            else:
+                log_msg = f"[{timestamp}] Capture failed. Screen is locked."
 
     if st.session_state.halter_log[-1] != log_msg:
         st.session_state.halter_log.append(log_msg)
