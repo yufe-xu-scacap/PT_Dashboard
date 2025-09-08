@@ -342,43 +342,11 @@ def perform_realistic_click(hwnd, x, y, click_type='left'):
         if 'original_pos' in locals():
             mouse_controller.position = original_pos
 
+# --- HELPER FUNCTIONS ---
+# (Your helper functions like find_window_by_title_substring, etc., are here)
+# ...
 
-# ... after all your "if 'key' not in st.session_state:" lines ...
-
-# --- NEW: PYGAME MIXER INITIALIZATION LOGIC ---
-# Get the currently selected device from the UI
-device_choice = st.session_state.audio_device_selection
-
-# Check if the mixer needs to be re-initialized
-if st.session_state.get('current_audio_device') != device_choice:
-    st.session_state.current_audio_device = device_choice
-
-    # Safely shut down the old mixer if it's running
-    if pygame.mixer.get_init():
-        pygame.mixer.quit()
-
-    # Initialize with the chosen device
-    try:
-        if device_choice == "Default":
-            pygame.mixer.init()  # Pygame chooses the default device
-        else:
-            pygame.mixer.init(devicename=device_choice)  # Use the specific device
-        st.sidebar.success(f"Audio output set to: **{device_choice}**")
-    except Exception as e:
-        st.sidebar.error(f"Failed to set audio device: {e}")
-# --- END NEW LOGIC ---
-
-
-# --- INITIALIZE SOUND OBJECTS ---
-high_touch_sound = initialize_sounds(HIGH_TOUCH_SOUND_FILE)
-halter_sound = initialize_sounds(HALTER_SOUND_FILE)
-gross_exposure_sounds = initialize_sounds(GROSS_EXP_SOUND_FILES)
-pnl_alert_sound = initialize_sounds(PNL_ALERT_SOUND_PATH)  # NEU
-ocr_failed_sound = initialize_sounds(OCR_FAILED_SOUND_FILE)
-stale_gross_exp_sound = initialize_sounds(STALE_GROSS_EXP_SOUND_FILE)
-stale_pnl_sound = initialize_sounds(STALE_PNL_SOUND_FILE)
-
-# --- INITIALIZE SESSION STATE ---
+# --- 1. INITIALIZE SESSION STATE (Moved to here) ---
 if 'high_touch_log' not in st.session_state: st.session_state.high_touch_log = ["Ready."]
 if 'halter_log' not in st.session_state: st.session_state.halter_log = ["Ready."]
 if 'gross_exp_log' not in st.session_state: st.session_state.gross_exp_log = ["Ready."]
@@ -399,6 +367,41 @@ if 'pnl_stale_since' not in st.session_state: st.session_state.pnl_stale_since =
 if 'stale_pnl_alerted' not in st.session_state: st.session_state.stale_pnl_alerted = False
 if 'clicker_process' not in st.session_state: st.session_state.clicker_process = None
 if 'ocr_failure_alerted' not in st.session_state: st.session_state.ocr_failure_alerted = False
+# This line is crucial: It provides the default value before the widget is created.
+if 'audio_device_selection' not in st.session_state: st.session_state.audio_device_selection = "Default"
+if 'current_audio_device' not in st.session_state: st.session_state.current_audio_device = None
+
+
+# --- 2. PYGAME MIXER INITIALIZATION LOGIC (Now runs second) ---
+# This code now works because audio_device_selection was initialized above.
+device_choice = st.session_state.audio_device_selection
+if st.session_state.get('current_audio_device') != device_choice:
+    st.session_state.current_audio_device = device_choice
+    # Safely shut down the old mixer if it's running
+    if pygame.mixer.get_init():
+        pygame.mixer.quit()
+
+    # Initialize with the chosen device
+    try:
+        if device_choice == "Default":
+            pygame.mixer.init()  # Pygame chooses the default device
+        else:
+            pygame.mixer.init(devicename=device_choice)  # Use the specific device
+        st.sidebar.success(f"Audio output set to: **{device_choice}**")
+    except Exception as e:
+        st.sidebar.error(f"Failed to set audio device: {e}")
+
+
+# --- 3. INITIALIZE SOUND OBJECTS (Now runs third) ---
+# This now works because pygame.mixer.init() was just called.
+high_touch_sound = initialize_sounds(HIGH_TOUCH_SOUND_FILE)
+halter_sound = initialize_sounds(HALTER_SOUND_FILE)
+gross_exposure_sounds = initialize_sounds(GROSS_EXP_SOUND_FILES)
+pnl_alert_sound = initialize_sounds(PNL_ALERT_SOUND_PATH)
+ocr_failed_sound = initialize_sounds(OCR_FAILED_SOUND_FILE)
+stale_gross_exp_sound = initialize_sounds(STALE_GROSS_EXP_SOUND_FILE)
+stale_pnl_sound = initialize_sounds(STALE_PNL_SOUND_FILE)
+
 
 
 # --- MAIN PAGE LAYOUT ---
@@ -413,17 +416,17 @@ st.html("""
 st.logo("data/logo.png", size="large")
 st.sidebar.success("Select a page above.")
 
-# --- NEW UI ELEMENT ---
+# --- Audio Settings UI Widget ---
 st.sidebar.header("Audio Settings")
-available_devices = get_output_devices()
-selected_device = st.sidebar.selectbox(
+available_devices = get_output_devices() # First, get the list of devices
+selected_device = st.sidebar.selectbox(    # Then, create the widget using that list
     "Select Audio Output Device",
     options=available_devices,
     key='audio_device_selection'
 )
-# --- END NEW UI ELEMENT ---
 
 st.info("Powered by Hedge Fund Technology!")
+
 
 # --- 1. HIGH TOUCH ALERT UI ---
 st.divider()
