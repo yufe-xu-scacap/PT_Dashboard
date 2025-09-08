@@ -160,21 +160,20 @@ def create_table_image(
         col_widths: List[int],
         align_header: List[str],
         align_cells: List[str],
-        # Add this new optional parameter for styling
         row_styles: Optional[Dict[str, Dict[str, str]]] = None,
-        table_width_fraction: float = 1.0
+        table_width_fraction: float = 1.0,
+        footer_text: Optional[str] = None
 ):
     """
-    Generates a PNG image for a DataFrame table, with conditional row styling.
+    Generates a PNG image for a DataFrame table. The footer is placed directly
+    below the table with no extra margin by adjusting the table's vertical domain.
     """
     if row_styles is None:
         row_styles = {}
 
-    # Define default colors
     default_fill_color = 'white'
-    default_font_color = '#101112'  # Dark grey
+    default_font_color = '#101112'
 
-    # Generate lists of colors for each row based on the styling rules
     row_fill_colors = [
         row_styles.get(row_name, {}).get('fill_color', default_fill_color) for row_name in df.index
     ]
@@ -182,14 +181,23 @@ def create_table_image(
         row_styles.get(row_name, {}).get('font_color', default_font_color) for row_name in df.index
     ]
 
-    # The colors need to be applied to every cell in the row.
-    # We create a list of lists, one for each column in the table.
-    num_table_cols = len(df.columns) + 1  # +1 for the index column
+    num_table_cols = len(df.columns) + 1
     final_fill_colors = [row_fill_colors] * num_table_cols
     final_font_colors = [row_font_colors] * num_table_cols
 
+    # ### MODIFICATION START ###
+    # Dynamically set the table's vertical domain to make space for the footer
+    if footer_text:
+        # Reserve the bottom 10% of the vertical space for the footer
+        table_y_domain = [0.1, 1]
+        footer_y_position = 0.1
+    else:
+        # Use the full vertical space if there is no footer
+        table_y_domain = [0, 1]
+
     fig = go.Figure(data=[go.Table(
-        domain=dict(x=[0, table_width_fraction], y=[0, 1]),
+        # Use the dynamic domain here
+        domain=dict(x=[0, table_width_fraction], y=table_y_domain),
         header=dict(
             values=[f"<b>{df.index.name}</b>"] + list(df.columns),
             fill_color='#A8D0CA',
@@ -199,18 +207,35 @@ def create_table_image(
         ),
         cells=dict(
             values=[df.index.tolist()] + [df[col] for col in df.columns],
-            fill_color=final_fill_colors,  # Use the new color list
+            fill_color=final_fill_colors,
             align=align_cells,
-            font=dict(color=final_font_colors, size=16),  # Use the new font color list
+            font=dict(color=final_font_colors, size=16),
             height=28
         ),
         columnwidth=col_widths
     )])
 
     fig.update_layout(
-        margin=dict(l=20, r=20, t=20, b=20),
+        # A small, consistent bottom margin is now sufficient
+        margin=dict(l=20, r=20, t=10, b=10),
         paper_bgcolor='white',
     )
+
+    if footer_text:
+        fig.add_annotation(
+            text=f"<i>{footer_text}</i>",
+            align='left',
+            showarrow=False,
+            xref='paper',
+            yref='paper',
+            x=0,
+            # Position the footer at the top of the reserved space
+            y=footer_y_position,
+            yanchor='top',
+            font=dict(size=12, color="grey")
+        )
+    # ### MODIFICATION END ###
+
     return pio.to_image(fig, format='png', width=width, height=height, scale=1.0)
 
 
@@ -218,7 +243,7 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
     """
     Generates the final PnL Breakdown plot with intelligent, compact, non-overlapping labels.
     """
-    # --- DATA PREPARATION ---
+    # --- DATA PREPARATION (This part remains unchanged) ---
     plot_data_list = [
         {'Term': f'T-{i}', 'Intraday_PnL': pnl_data.get(f'T-{i}', 0), 'Overnight_PnL': overnight_data.get(f'T-{i}', 0)}
         for i in range(4, 0, -1)]
@@ -232,10 +257,10 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
     df_plot = df_plot.sort_values(by='DateObj').reset_index(drop=True)
     df_plot['DateLabel'] = df_plot['DateObj'].dt.strftime('%Y-%m-%d')
 
-    # --- PLOT CREATION ---
+    # --- PLOT CREATION (This part remains unchanged) ---
     fig = go.Figure()
 
-    # --- TRACE DEFINITIONS ---
+    # --- TRACE DEFINITIONS (This part remains unchanged) ---
     fig.add_trace(
         go.Scatter(x=df_plot['DateLabel'], y=df_plot['Intraday_PnL'], name='Primary Session PnL (lhs)',
                    line=dict(color='#6BDBCB'),
@@ -280,7 +305,8 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
         hovertemplate='Late Session PnL/Turnover: %{y:.2f} bps<extra></extra>'
     ))
 
-    # --- AXIS RANGE CALCULATION ---
+    # --- AXIS & ANNOTATION LOGIC (This part remains unchanged) ---
+    # ... (all the existing logic for calculating ranges and data labels)
     all_eur_values = pd.concat([df_plot['Total_PnL'].dropna(), df_plot['Intraday_PnL'].dropna()])
     all_bps_values = pd.concat([df_plot['pnl_turnover_early_bps'], df_plot['pnl_turnover_late_bps']]).dropna()
     has_negative_values = (all_eur_values.min() < 0 if not all_eur_values.empty else False) or \
@@ -295,7 +321,7 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
             if series.empty: return 0, 1
             data_min, data_max = series.min(), series.max()
             data_range = data_max - data_min if data_max > data_min else abs(data_max) or 1
-            padding = data_range * 0.25  # Increased padding to make room for labels
+            padding = data_range * 0.25
             final_min = min(0, data_min - padding)
             final_max = max(0, data_max + padding)
             return final_min, final_max
@@ -317,13 +343,10 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
 
     bps_range = [bps_axis_min, bps_axis_max]
 
-    # --- FINAL ANNOTATION LOGIC ---
     y_range_for_norm = y_axis_max - y_axis_min
     bps_range_for_norm = bps_axis_max - bps_axis_min
     for i, date in enumerate(df_plot['DateLabel']):
         labels_to_plot = []
-
-        # Gather labels for the current date
         pnl_val = df_plot['Intraday_PnL'].iloc[i]
         labels_to_plot.append(
             {'text': f'{pnl_val / 1000:,.1f}k', 'value': pnl_val, 'yref': 'y1', 'font': {'color': '#101112'}})
@@ -342,7 +365,6 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
 
         if not labels_to_plot: continue
 
-        # Add normalized y-values and sort labels from highest to lowest
         for label in labels_to_plot:
             if label['yref'] == 'y1':
                 norm_y = (label['value'] - y_axis_min) / y_range_for_norm if y_range_for_norm else 0
@@ -351,44 +373,33 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
             label['normalized_y'] = norm_y
         labels_to_plot.sort(key=lambda x: x['normalized_y'], reverse=True)
 
-        # --- Intelligent Separation Algorithm ---
         final_shifts = [0] * len(labels_to_plot)
-        MIN_SEPARATION = 0.04  # Minimum separation in normalized units (4% of the axis)
+        MIN_SEPARATION = 0.04
 
-        # 1. Initial placement: try to keep labels close and alternate
         for j, label in enumerate(labels_to_plot):
             direction = 'up' if j % 2 == 0 else 'down'
             if label['normalized_y'] < 0.2: direction = 'up'
             if label['normalized_y'] > 0.8: direction = 'down'
             final_shifts[j] = 20 if direction == 'up' else -20
 
-        # 2. Nudge labels apart to resolve overlaps
-        for _ in range(5):  # Run a few passes to let labels settle
+        for _ in range(5):
             for j in range(len(labels_to_plot) - 1):
                 label_a = labels_to_plot[j]
                 label_b = labels_to_plot[j + 1]
-
-                # Approximate final positions in normalized units
                 pos_a = label_a['normalized_y'] + (final_shifts[j] / (height * 0.8))
                 pos_b = label_b['normalized_y'] + (final_shifts[j + 1] / (height * 0.8))
-
                 separation = abs(pos_a - pos_b)
 
                 if separation < MIN_SEPARATION:
-                    # If they are too close, push them apart
                     push_amount = (MIN_SEPARATION - separation) * (height * 0.8) / 2
                     final_shifts[j] += push_amount
                     final_shifts[j + 1] -= push_amount
-
-        # Horizontal alignment for endpoints
         if i == 0:
             x_anchor, x_shift = 'left', 10
         elif i == len(df_plot) - 1:
             x_anchor, x_shift = 'right', -10
         else:
             x_anchor, x_shift = 'center', 0
-
-        # Add an annotation for each label with its final calculated shift
         for j, label in enumerate(labels_to_plot):
             fig.add_annotation(
                 x=date, y=label['value'], yref=label['yref'], text=label['text'],
@@ -403,7 +414,11 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
                    font=dict(size=24, color='#101112')),
         plot_bgcolor='white', paper_bgcolor='white', hovermode='x unified',
         font=dict(family="Arial, sans-serif", color='#101112'),
-        margin=dict(t=80, b=150, l=80, r=80),
+
+        # ### MODIFICATION 1: INCREASE BOTTOM MARGIN ###
+        # Increased bottom margin from 150 to 190 to make space for the text
+        margin=dict(t=80, b=190, l=80, r=80),
+
         legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5, font=dict(size=18),
                     bgcolor='rgba(255,255,255,0.7)', bordercolor='#EAEAEA', borderwidth=1),
         xaxis=dict(domain=[0, 0.94], type='category', title_text='', tickfont=dict(size=20), showgrid=False,
@@ -422,6 +437,22 @@ def create_pnl_plot(pnl_data, overnight_data, win_rate_data, pnl_turnover_data, 
                     minor=dict(ticks="outside", ticklen=5, tickcolor="black", showgrid=False, griddash='dot',
                                gridcolor='LightGrey'))
     )
+
+    # ### MODIFICATION 2: ADD THE ANNOTATION ###
+    fig.add_annotation(
+        text="<i>Win rate reflects the share of total trading volume that was profitable.<i>",
+        align='left',
+        showarrow=False,
+        xref='paper',  # Positions the annotation relative to the whole figure
+        yref='paper',
+        x=0.0,  # Aligns the text block to the left edge of the figure
+        y=-0.25,  # Positions the text block below the legend
+        font=dict(
+            size=18,
+            color="grey"
+        )
+    )
+
     return pio.to_image(fig, format='png', width=width, height=height, scale=1)
 
 
@@ -661,6 +692,58 @@ def create_top_traded_plot(df_trades: pd.DataFrame, df_PnL: pd.DataFrame, df_Ins
     return pio.to_image(fig, format='png', width=width, height=height, scale=1)
 
 
+# ### NEW HELPER FUNCTION START ###
+def _calculate_volume_weighted_win_rate(df_pnl: pd.DataFrame, df_trades_early: Optional[pd.DataFrame],
+                                        df_trades_late: Optional[pd.DataFrame]) -> float:
+    """
+    Calculates the volume-weighted win rate for a single day.
+    Win Rate = (Volume of profitable instruments) / (Total volume of all instruments)
+    """
+    # 1. Combine early and late trades into a single DataFrame for the day
+    if df_trades_early is not None and df_trades_late is not None:
+        df_all_trades = pd.concat([df_trades_early, df_trades_late], ignore_index=True)
+    elif df_trades_early is not None:
+        df_all_trades = df_trades_early
+    elif df_trades_late is not None:
+        df_all_trades = df_trades_late
+    else:
+        # If no trades data is available, win rate is 0
+        return 0.0
+
+    if df_all_trades.empty:
+        return 0.0
+
+    # 2. Calculate PnL per instrument
+    # We exclude the summary rows 'SCALMM' and 'SCALFRAC'
+    pnl_per_instrument = df_pnl[~df_pnl['Unnamed: 0'].isin(['SCALMM', 'SCALFRAC'])] \
+        .groupby('Unnamed: 0')['BTPLD'].sum().reset_index()
+    pnl_per_instrument.rename(columns={'Unnamed: 0': 'Instrument', 'BTPLD': 'PnL'}, inplace=True)
+
+    # 3. Calculate Turnover per instrument
+    turnover_per_instrument = df_all_trades.groupby('Instrument')['Premium'].apply(
+        lambda x: x.abs().sum()).reset_index()
+    turnover_per_instrument.rename(columns={'Premium': 'Turnover'}, inplace=True)
+
+    # 4. Merge PnL and Turnover data
+    df_merged = pd.merge(pnl_per_instrument, turnover_per_instrument, on='Instrument', how='inner')
+
+    if df_merged.empty:
+        return 0.0
+
+    # 5. Calculate total and winning turnover
+    total_turnover = df_merged['Turnover'].sum()
+    winning_turnover = df_merged[df_merged['PnL'] > 0]['Turnover'].sum()
+
+    # 6. Calculate the final win rate, handling division by zero
+    if total_turnover == 0:
+        return 0.0
+    else:
+        return winning_turnover / total_turnover
+
+
+# ### NEW HELPER FUNCTION END ###
+
+
 def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date: datetime, total_instrument: int,
                                log_list: List[str], log_placeholder, pnl_override: Optional[Dict[str, float]] = None):
     """
@@ -669,12 +752,12 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
     """
     try:
         # --- Define plot and table dimensions ---
+        PNL_TABLE_WIDTH, PNL_TABLE_HEIGHT = 720, 340
+        TRADING_TABLE_WIDTH, TRADING_TABLE_HEIGHT = 720, 340
         PNL_PLOT_WIDTH, PNL_PLOT_HEIGHT = 1600, 900
         TURNOVER_PLOT_WIDTH, TURNOVER_PLOT_HEIGHT = 1600, 900
         TOP_PERF_PLOT_WIDTH, TOP_PERF_PLOT_HEIGHT = 1600, 1000
-        TOP_TRADED_PLOT_WIDTH, TOP_TRADED_PLOT_HEIGHT = 1600, 1000  ### MODIFIED: Added dimensions for new plot
-        PNL_TABLE_WIDTH, PNL_TABLE_HEIGHT = 720, 330
-        TRADING_TABLE_WIDTH, TRADING_TABLE_HEIGHT = 720, 360
+        TOP_TRADED_PLOT_WIDTH, TOP_TRADED_PLOT_HEIGHT = 1600, 1000
 
         update_log("Processing report data...", log_list, log_placeholder)
 
@@ -833,9 +916,33 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         df_date = pd.DataFrame(date_mapping_data)
 
         historical_pnl = {'T-0': df_PnL, 'T-1': df_t1, 'T-2': df_t2, 'T-3': df_t3, 'T-4': df_t4, 'T-5': df_t5}
-        win_rate_data = {'Term': [f'T-{i}' for i in range(4, -1, -1)], 'Win_Rate': [
-            (df[~df['Unnamed: 0'].isin(['SCALMM', 'SCALFRAC'])].groupby('Unnamed: 0')['BTPLD'].sum() > 0).mean() for df
-            in [df_t4, df_t3, df_t2, df_t1, df_PnL]]}
+
+        # ### MODIFIED START ###
+        # New, volume-weighted win rate calculation
+
+        historical_trades_early = {f'T-{i}': report_data.get(f'Trades_T-{i}') for i in range(5, 0, -1)}
+        historical_trades_early['T-0'] = report_data.get('Trades')
+        historical_trades_late = {f'T-{i}': report_data.get(f'Trades_late_T-{i}') for i in range(5, 0, -1)}
+        historical_trades_late['T-0'] = report_data.get('Trades_late')
+
+        win_rates = []
+        terms = [f'T-{i}' for i in range(4, -1, -1)]
+
+        for term in terms:
+            pnl_df = historical_pnl.get(term)
+            trades_early_df = historical_trades_early.get(term)
+            trades_late_df = historical_trades_late.get(term)
+
+            if pnl_df is not None:
+                rate = _calculate_volume_weighted_win_rate(pnl_df, trades_early_df, trades_late_df)
+                win_rates.append(rate)
+            else:
+                win_rates.append(0.0)  # Append 0 if PnL data is missing for a day
+
+        win_rate_data = {'Term': terms, 'Win_Rate': win_rates}
+
+        # ### MODIFIED END ###
+
         ytd_pnl = {
             term: round(df.loc[(df['Portfolio.Name'] == 'SCALMM') & (df['Unnamed: 0'] != 'SCALMM'), 'BTPL'].sum()) for
             term, df in historical_pnl.items()}
@@ -844,11 +951,6 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
         overnight_pnl_data = {f'T-{i}': (ytd_pnl[f'T-{i - 1}'] - ytd_pnl[f'T-{i}']) - daily_intraday_pnl[f'T-{i - 1}']
                               for i
                               in range(1, 5)}
-
-        historical_trades_early = {f'T-{i}': report_data.get(f'Trades_T-{i}') for i in range(1, 5)}
-        historical_trades_early['T-0'] = report_data.get('Trades')
-        historical_trades_late = {f'T-{i}': report_data.get(f'Trades_late_T-{i}') for i in range(1, 5)}
-        historical_trades_late['T-0'] = report_data.get('Trades_late')
 
         pnl_turnover_metrics = []
         for term in [f'T-{i}' for i in range(4, -1, -1)]:
@@ -886,7 +988,10 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
                                            table_width_fraction=0.75,
                                            align_header=['left', 'right'],
                                            align_cells=['left', 'right'],
-                                           row_styles=pnl_row_styles)
+                                           row_styles=pnl_row_styles,
+                                           # ### MODIFICATION: Pass the footer text here ###
+                                           footer_text="The MA(5) represents the five-day moving average of daily P&L, including today"
+                                           )
         st.image(pnl_table_png, caption="")
 
         trading_table_png = create_table_image(df=df_Trading_Statistics,
@@ -914,14 +1019,11 @@ def process_and_display_report(report_data: Dict[str, pd.DataFrame], report_date
                                                                  width=TOP_PERF_PLOT_WIDTH, height=TOP_PERF_PLOT_HEIGHT)
             st.image(top_performers_plot_png, caption="Top 10 Winners & Losers by PnL")
 
-            ### --- MODIFIED: CALL AND DISPLAY THE NEW PLOT --- ###
-            # New, correct call
             top_traded_plot_png = create_top_traded_plot(df_trades,
-                                                         df_PnL,  # <-- Add the PnL DataFrame as the second argument
+                                                         df_PnL,
                                                          df_Instrument,
                                                          width=TOP_TRADED_PLOT_WIDTH, height=TOP_TRADED_PLOT_HEIGHT)
             st.image(top_traded_plot_png, caption="Top 10 Most Traded Instruments by RFQ Volume")
-            ### --- END MODIFICATION --- ###
 
         else:
             st.warning(

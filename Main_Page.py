@@ -102,49 +102,74 @@ CLICKER_TARGET_WINDOW_TITLE = config['windows']['click_target_window_title']
 DELAY_BETWEEN_CLICKS = config['clicker']['delay_between_clicks']
 
 # --- OCR FAILURE POP-UP FUNCTION ---
+# --- OCR FAILURE POP-UP FUNCTION ---
 def show_ocr_failed_popup():
     """
     Creates and shows a temporary, non-blocking pop-up window
-    to inform the user that OCR has failed.
-    The window closes automatically after 3 seconds.
+    that flashes red to inform the user that OCR has failed.
+    The window closes automatically or when the user clicks OK.
     """
     try:
-        # Create a hidden root window
+        mouse_x, mouse_y = pyautogui.position()
         root = tk.Tk()
         root.withdraw()
-
-        # Create a Toplevel window which acts as the pop-up
         popup = tk.Toplevel(root)
         popup.title("OCR Failure")
-
-        # Make the pop-up stay on top of other windows
         popup.attributes("-topmost", True)
+        width = 450
+        height = 180  # Made it a little taller for the button
+        popup.geometry(f'{width}x{height}+{mouse_x}+{mouse_y}')
 
-        # The message to be displayed
         message = (
-            "OCR failed to read values from the target window.\n"
+            "OCR failed to read values from the target window.\n\n"
             "Please ensure the window is visible and not obstructed."
         )
 
-        # Create a Label widget to show the message
-        label = tk.Label(popup, text=message, padx=20, pady=20)
-        label.pack()
+        label = tk.Label(
+            popup,
+            text=message,
+            padx=20,
+            pady=10,  # Adjusted padding
+            fg='#FFFFFF'
+        )
+        label.pack(expand=True, fill='both')
 
-        # --- The Key Part ---
-        # Schedule the pop-up to be destroyed after 3000 milliseconds (3 seconds)
-        # You can change this value to make it stay longer or shorter.
-        popup.after(5000, popup.destroy)
+        # --- NEW: OK BUTTON ---
+        # Create a button with the text "OK".
+        # The 'command=popup.destroy' tells the button to run the popup.destroy()
+        # function when it's clicked, which closes the window.
+        ok_button = tk.Button(
+            popup,
+            text="OK",
+            command=popup.destroy,
+            width=10  # Set a fixed width for the button
+        )
+        # Add the button to the window with some padding below it.
+        ok_button.pack(pady=10)
 
-        # This will keep the root window alive long enough for the pop-up to show
-        # and then clean up after the pop-up is destroyed.
-        root.after(5100, root.destroy)
+        # --- FLASHING LOGIC ---
+        COLOR_RED = '#FF0000'
+        COLOR_DEFAULT = '#F0F0F0'
 
-        # This is needed to handle the pop-up events properly, but it doesn't block.
+        def flash_color(is_red=True):
+            try:
+                current_color = COLOR_RED if is_red else COLOR_DEFAULT
+                popup.config(bg=current_color)
+                label.config(bg=current_color)
+                # The button's color will not flash, making it stand out.
+                popup.after(500, flash_color, not is_red)
+            except tk.TclError:
+                pass
+
+        flash_color()
+
+        popup.after(120000, popup.destroy)
+        root.after(120100, root.destroy)
         root.mainloop()
 
     except Exception as e:
-        # This will log an error to the console if the GUI can't be displayed
         print(f"Error showing pop-up: {e}")
+
 
 
 #this needed for stop OCR failed ouput when screen is locked
@@ -236,13 +261,19 @@ def parse_PnL_value(text):
     """
     Extrahiert die Zahl zwischen 'SCALMM' und 'EUR', entfernt Leerzeichen und Hashtags.
     """
-    # Regex ist robust gegen unterschiedliche Groß-/Kleinschreibung und optionale Leerzeichen
+    # Regex is robust against different casing and optional spaces
     match = re.search(r'scalmm\s*([\d\s#,.]+?)\s*eur\b', text, re.IGNORECASE)
     if match:
         value_string = match.group(1).replace(" ", "").replace("#", "").replace(",", "").replace(".", "")
-        return int(value_string)
-    return None
 
+        # --- FIX ---
+        # Add a check to ensure the string is not empty *after* cleaning it.
+        if value_string:
+            return int(value_string)
+        # If the string is empty, we fall through and return None,
+        # which is the correct behavior (value not found).
+
+    return None
 # --- Click Automation Helper Functions ---
 mouse_controller = mouse.Controller()
 
@@ -323,6 +354,8 @@ if 'stale_gross_exp_alerted' not in st.session_state: st.session_state.stale_gro
 if 'pnl_stale_since' not in st.session_state: st.session_state.pnl_stale_since = 0
 if 'stale_pnl_alerted' not in st.session_state: st.session_state.stale_pnl_alerted = False
 if 'clicker_process' not in st.session_state: st.session_state.clicker_process = None
+if 'ocr_failure_alerted' not in st.session_state: st.session_state.ocr_failure_alerted = False
+
 
 # --- MAIN PAGE LAYOUT ---
 st.title("PT Dashboard")
@@ -582,33 +615,36 @@ if run_gross_exp and all(gross_exposure_sounds.values()):
                 pnl_log_part = "PnL: Not Found"
                 st.session_state.last_pnl_value = None
 
-            # --- UNIFIED PARSING FAILURE ALERT LOGIC ---
-                # --- UNIFIED PARSING FAILURE ALERT LOGIC ---
+            # --- NEW AND IMPROVED: UNIFIED PARSING FAILURE ALERT LOGIC ---
             log_suffix = ""
             if value is None or pnl_value is None:
-                # MODIFIED: Added 'and not is_screen_locked()' to the condition.
-                # The alert will now only trigger if the cooldown has passed AND the screen is not locked.
-                if (now - st.session_state.parsing_last_alert) > NotFound_ALERT_COOLDOWN and not is_screen_locked():
+                # If either value wasn't found, we're in a failure state.
 
-                    # Conditional alert based on user's choice in the UI
+                # NEW LOGIC: Only alert if we haven't already alerted for this failure.
+                if not st.session_state.ocr_failure_alerted and not is_screen_locked():
+
+                    # Your existing alert preference logic is perfect.
                     alert_preference = st.session_state.get("ocr_alert_type", "Sound Alert")
-
                     if alert_preference == "Pop-up Window":
                         show_ocr_failed_popup()
-                    else:  # Default to "Sound Alert"
+                    else:
                         if not isinstance(ocr_failed_sound, str):
                             ocr_failed_sound.play()
 
                     log_suffix = " -> PARSE ALERT!"
-                    st.session_state.parsing_last_alert = now
+                    # Latch the state: We have now alerted the user.
+                    st.session_state.ocr_failure_alerted = True
+
                 elif is_screen_locked():
-                    # This is an optional addition for clearer logging.
-                    # It tells you that an alert was suppressed because the screen was locked.
                     log_suffix = " (Parse Alert Suppressed - Screen Locked)"
                 else:
-                    log_suffix = " (Parse Cooldown)"
+                    # We are in a failure state, but we've already alerted, so we stay quiet.
+                    log_suffix = " (Ongoing Parse Failure)"
+
             else:
-                st.session_state.parsing_last_alert = 0  # Reset cooldown if both values are found
+                # SUCCESS! Both values were found.
+                # Reset the latch so we are ready to alert for the *next* failure.
+                st.session_state.ocr_failure_alerted = False
 
             log_msg = f"[{timestamp}] {gross_exp_log_part} | {pnl_log_part}{log_suffix}"
 
