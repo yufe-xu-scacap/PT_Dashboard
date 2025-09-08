@@ -18,6 +18,7 @@ import ctypes
 import streamlit as st
 import pygame
 import multiprocessing
+import sounddevice as sd
 
 def load_config(filepath="config.json"):
     """Loads the configuration from a JSON file."""
@@ -144,7 +145,7 @@ def show_ocr_failed_popup():
             padx=20,
             pady=10,  # Adjusted padding
             fg='#000000',
-            font=("Segoe UI", 16)
+            font=("Segoe UI", 14)
         )
         label.pack(expand=True, fill='both')
 
@@ -226,9 +227,8 @@ def is_screen_locked():
 # --- HELPER FUNCTIONS ---
 @st.cache_resource
 def initialize_sounds(file_paths):
-    """Initializes pygame and loads one or more sound files."""
-    if not pygame.mixer.get_init():
-        pygame.mixer.init()
+    """Loads one or more sound files. Assumes pygame.mixer is already initialized."""
+    # The pygame.mixer.init() call is removed from here.
     sounds = {}
     if isinstance(file_paths, dict):
         for key, path in file_paths.items():
@@ -266,6 +266,13 @@ def parse_gross_exposure_value(text):
         value_string = match.group(1).replace(" ", "")
         return int(value_string)
     return None
+
+def get_output_devices():
+    """Gets a list of available audio output device names."""
+    devices = sd.query_devices()
+    output_devices = [d['name'] for d in devices if d['max_output_channels'] > 0]
+    return ["Default"] + output_devices # Add "Default" as the first option
+
 
 def parse_PnL_value(text):
     """
@@ -335,6 +342,33 @@ def perform_realistic_click(hwnd, x, y, click_type='left'):
         if 'original_pos' in locals():
             mouse_controller.position = original_pos
 
+
+# ... after all your "if 'key' not in st.session_state:" lines ...
+
+# --- NEW: PYGAME MIXER INITIALIZATION LOGIC ---
+# Get the currently selected device from the UI
+device_choice = st.session_state.audio_device_selection
+
+# Check if the mixer needs to be re-initialized
+if st.session_state.get('current_audio_device') != device_choice:
+    st.session_state.current_audio_device = device_choice
+
+    # Safely shut down the old mixer if it's running
+    if pygame.mixer.get_init():
+        pygame.mixer.quit()
+
+    # Initialize with the chosen device
+    try:
+        if device_choice == "Default":
+            pygame.mixer.init()  # Pygame chooses the default device
+        else:
+            pygame.mixer.init(devicename=device_choice)  # Use the specific device
+        st.sidebar.success(f"Audio output set to: **{device_choice}**")
+    except Exception as e:
+        st.sidebar.error(f"Failed to set audio device: {e}")
+# --- END NEW LOGIC ---
+
+
 # --- INITIALIZE SOUND OBJECTS ---
 high_touch_sound = initialize_sounds(HIGH_TOUCH_SOUND_FILE)
 halter_sound = initialize_sounds(HALTER_SOUND_FILE)
@@ -378,6 +412,17 @@ st.html("""
         """)
 st.logo("data/logo.png", size="large")
 st.sidebar.success("Select a page above.")
+
+# --- NEW UI ELEMENT ---
+st.sidebar.header("Audio Settings")
+available_devices = get_output_devices()
+selected_device = st.sidebar.selectbox(
+    "Select Audio Output Device",
+    options=available_devices,
+    key='audio_device_selection'
+)
+# --- END NEW UI ELEMENT ---
+
 st.info("Powered by Hedge Fund Technology!")
 
 # --- 1. HIGH TOUCH ALERT UI ---
