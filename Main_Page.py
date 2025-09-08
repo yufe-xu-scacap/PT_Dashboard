@@ -143,8 +143,8 @@ def show_ocr_failed_popup():
             text=message,
             padx=20,
             pady=10,  # Adjusted padding
-            fg='#FFFFFF',
-            font=("Segoe UI", 12)
+            fg='#000000',
+            font=("Segoe UI", 16)
         )
         label.pack(expand=True, fill='both')
 
