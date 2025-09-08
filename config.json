@@ -2,6 +2,7 @@
   "general": {
     "check_interval": 5
   },
+  "tesseract_path": "C:\\Program Files\\Tesseract-OCR\\tesseract.exe",
   "cooldown": {
     "high_touch_cooldown": 5,
     "halter_cooldown": 120,

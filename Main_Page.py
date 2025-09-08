@@ -44,11 +44,25 @@ st.set_page_config(
 )
 
 # --- IMPORTANT: TESSERACT CONFIGURATION ---
+# try:
+#     pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# except Exception as e:
+#     st.error(f"Tesseract not configured: {e}. OCR-based alerts will not work.")
+#     st.info("Please install Tesseract-OCR and ensure the path above is correct.")
+# --- IMPORTANT: TESSERACT CONFIGURATION ---
+
 try:
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+    # Read the path from the loaded config dictionary
+    tesseract_path = config['tesseract_path']
+    pytesseract.pytesseract.tesseract_cmd = tesseract_path
+except KeyError:
+    # This error occurs if 'tesseract_path' is missing from config.json
+    st.error("Tesseract path not found in config.json. Please add the 'tesseract_path' key.")
+    st.stop()
 except Exception as e:
-    st.error(f"Tesseract not configured: {e}. OCR-based alerts will not work.")
-    st.info("Please install Tesseract-OCR and ensure the path above is correct.")
+    # This handles other errors, like the path being invalid
+    st.error(f"Tesseract not configured correctly: {e}. OCR-based alerts will not work.")
+    st.info("Please ensure the path in your config.json is correct and Tesseract-OCR is installed.")
 
 # --- CSS STYLING ---
 st.markdown(
@@ -102,7 +116,6 @@ CLICKER_TARGET_WINDOW_TITLE = config['windows']['click_target_window_title']
 DELAY_BETWEEN_CLICKS = config['clicker']['delay_between_clicks']
 
 # --- OCR FAILURE POP-UP FUNCTION ---
-# --- OCR FAILURE POP-UP FUNCTION ---
 def show_ocr_failed_popup():
     """
     Creates and shows a temporary, non-blocking pop-up window
@@ -130,14 +143,11 @@ def show_ocr_failed_popup():
             text=message,
             padx=20,
             pady=10,  # Adjusted padding
-            fg='#FFFFFF'
+            fg='#FFFFFF',
+            font=("Segoe UI", 12)
         )
         label.pack(expand=True, fill='both')
 
-        # --- NEW: OK BUTTON ---
-        # Create a button with the text "OK".
-        # The 'command=popup.destroy' tells the button to run the popup.destroy()
-        # function when it's clicked, which closes the window.
         ok_button = tk.Button(
             popup,
             text="OK",
